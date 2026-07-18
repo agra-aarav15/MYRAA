@@ -14,9 +14,23 @@ export default function AvatarCanvas({
   const mouseRef = useRef({ x: 0, y: 0 });
 
   const [loading, setLoading] = useState(true);
+  const [isMobile, setIsMobile] = useState(false);
+  const [mobileLowPower, setMobileLowPower] = useState(false);
+
+  // Mobile Detection
+  useEffect(() => {
+    const checkMobile = () => {
+      const mobile = window.innerWidth < 768 || /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+      setIsMobile(mobile);
+      if (mobile) setMobileLowPower(true);
+    };
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
 
   useEffect(() => {
-    if (!containerRef.current) return;
+    if (!containerRef.current || mobileLowPower) return;
 
     const width = containerRef.current.clientWidth;
     const height = containerRef.current.clientHeight;
@@ -27,33 +41,27 @@ export default function AvatarCanvas({
     const camera = new THREE.PerspectiveCamera(32, width / height, 0.1, 100);
     camera.position.set(0, 1.25, 2.2);
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    const renderer = new THREE.WebGLRenderer({ antialias: !isMobile, alpha: true });
     renderer.setSize(width, height);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, isMobile ? 1 : 2));
+    renderer.shadowMap.enabled = !isMobile;
 
     containerRef.current.innerHTML = '';
     containerRef.current.appendChild(renderer.domElement);
 
-    // Studio Lighting
-    const ambientLight = new THREE.AmbientLight(0xffffff, 1.2);
+    // Calming Soft Natural Studio Lighting (No harsh neons)
+    const ambientLight = new THREE.AmbientLight(0xffffff, 1.35);
     scene.add(ambientLight);
 
-    const keyLight = new THREE.DirectionalLight(0xffffff, 2.2);
+    const keyLight = new THREE.DirectionalLight(0xfff8f0, 2.0);
     keyLight.position.set(2, 4, 3);
-    keyLight.castShadow = true;
     scene.add(keyLight);
 
-    const pinkRim = new THREE.DirectionalLight(0xff2768, 3.8);
-    pinkRim.position.set(-3, 2, -2);
-    scene.add(pinkRim);
+    const softFill = new THREE.PointLight(0xe4e4e7, 1.2, 6);
+    softFill.position.set(-2, 1, 2);
+    scene.add(softFill);
 
-    const fillLight = new THREE.PointLight(0xff007f, 1.8, 5);
-    fillLight.position.set(0, 1.1, 1.5);
-    scene.add(fillLight);
-
-    // Load User's Custom 3D Model (/model/source/one_one.glb)
+    // Load User 3D Model
     const loader = new GLTFLoader();
     const modelUrl = '/model/source/one_one.glb';
 
@@ -63,7 +71,6 @@ export default function AvatarCanvas({
         const model = gltf.scene;
         modelRef.current = model;
 
-        // Auto-scale and position character
         const box = new THREE.Box3().setFromObject(model);
         const size = box.getSize(new THREE.Vector3());
         const center = box.getCenter(new THREE.Vector3());
@@ -76,35 +83,24 @@ export default function AvatarCanvas({
         model.position.y = -center.y * scale + 0.55;
         model.position.z = -center.z * scale;
 
-        // Adjust T-Pose / A-Pose bones so arms rest naturally downward along body!
+        // Relax Arm Pose
         model.traverse((node) => {
-          if (node.isMesh) {
-            node.castShadow = true;
-            node.receiveShadow = true;
-          }
           if (node.isBone) {
             const name = node.name.toLowerCase();
-
-            // Head / Neck tracking bone
             if (name.includes('head') || name.includes('neck')) {
               headBoneRef.current = node;
             }
-
-            // Lower Left Arm downward
             if ((name.includes('arm') || name.includes('shoulder')) && (name.includes('l') || name.includes('left')) && !name.includes('forearm') && !name.includes('hand')) {
-              node.rotation.z = Math.PI / 2.6; // rotate left arm down
+              node.rotation.z = Math.PI / 2.6;
               node.rotation.x = 0.1;
             }
-
-            // Lower Right Arm downward
             if ((name.includes('arm') || name.includes('shoulder')) && (name.includes('r') || name.includes('right')) && !name.includes('forearm') && !name.includes('hand')) {
-              node.rotation.z = -Math.PI / 2.6; // rotate right arm down
+              node.rotation.z = -Math.PI / 2.6;
               node.rotation.x = 0.1;
             }
           }
         });
 
-        // Play animations if embedded in GLTF
         if (gltf.animations && gltf.animations.length > 0) {
           const mixer = new THREE.AnimationMixer(model);
           const action = mixer.clipAction(gltf.animations[0]);
@@ -116,13 +112,9 @@ export default function AvatarCanvas({
         setLoading(false);
       },
       undefined,
-      (error) => {
-        console.warn('GLTF Model load notice:', error);
-        setLoading(false);
-      }
+      () => setLoading(false)
     );
 
-    // Mouse Tracking
     const handleMouseMove = (e) => {
       const rect = containerRef.current.getBoundingClientRect();
       const x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
@@ -135,6 +127,10 @@ export default function AvatarCanvas({
     let clock = new THREE.Clock();
     let animationFrameId;
 
+    // Physics Damping Parameters for Natural Motion
+    let physicsVelocity = 0;
+    let physicsPosY = 0;
+
     const animate = () => {
       animationFrameId = requestAnimationFrame(animate);
       const delta = clock.getDelta();
@@ -144,13 +140,18 @@ export default function AvatarCanvas({
         mixerRef.current.update(delta);
       }
 
-      // Gentle breathing idle movement
+      // Real physics spring dynamics for natural breathing & sway
       if (modelRef.current) {
-        modelRef.current.position.y += Math.sin(elapsedTime * 2.5) * 0.0005;
+        const targetY = Math.sin(elapsedTime * 2.0) * 0.012;
+        const springForce = (targetY - physicsPosY) * 15;
+        physicsVelocity += springForce * delta;
+        physicsVelocity *= 0.88; // Damping
+        physicsPosY += physicsVelocity;
 
-        // Smooth mouse cursor head tracking
-        const targetRotY = mouseRef.current.x * 0.25;
-        const targetRotX = -mouseRef.current.y * 0.15;
+        modelRef.current.position.y = -0.25 + physicsPosY;
+
+        const targetRotY = mouseRef.current.x * 0.22;
+        const targetRotX = -mouseRef.current.y * 0.12;
 
         if (headBoneRef.current) {
           headBoneRef.current.rotation.y += (targetRotY - headBoneRef.current.rotation.y) * 0.05;
@@ -182,15 +183,43 @@ export default function AvatarCanvas({
       cancelAnimationFrame(animationFrameId);
       renderer.dispose();
     };
-  }, [isSpeaking]);
+  }, [isSpeaking, mobileLowPower, isMobile]);
 
   return (
     <div className="w-full h-full relative">
-      <div ref={containerRef} className="w-full h-full absolute inset-0 cursor-grab active:cursor-grabbing" />
-      {loading && (
-        <div className="absolute inset-0 flex items-center justify-center text-xs font-mono text-pink-400 bg-black/60 backdrop-blur-sm animate-pulse">
-          Loading 3D Model...
+      {mobileLowPower ? (
+        // Ultra-Smooth Mobile 2D Performance Card (Prevents phone battery drain & GPU lag)
+        <div className="w-full h-full flex flex-col items-center justify-center p-6 text-center bg-zinc-950">
+          <div className="w-28 h-28 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center text-4xl shadow-xl mb-4 animate-pulse">
+            ✨
+          </div>
+          <span className="text-sm font-bold text-zinc-100">MYRAA Mobile AI Companion</span>
+          <span className="text-xs text-zinc-500 mt-1">High-performance mobile mode active</span>
+          
+          <button
+            onClick={() => setMobileLowPower(false)}
+            className="mt-4 px-4 py-1.5 rounded-xl bg-zinc-900 border border-zinc-800 text-xs text-zinc-300 font-semibold hover:text-white transition"
+          >
+            Enable Full 3D Mode
+          </button>
         </div>
+      ) : (
+        <>
+          <div ref={containerRef} className="w-full h-full absolute inset-0 cursor-grab active:cursor-grabbing" />
+          {loading && (
+            <div className="absolute inset-0 flex items-center justify-center text-xs font-mono text-zinc-400 bg-black/60 backdrop-blur-sm animate-pulse">
+              Loading 3D Companion...
+            </div>
+          )}
+          {isMobile && (
+            <button
+              onClick={() => setMobileLowPower(true)}
+              className="absolute top-4 right-4 z-20 px-3 py-1 rounded-xl bg-zinc-900/90 border border-zinc-800 text-[10px] font-mono text-zinc-400 hover:text-white shadow-lg"
+            >
+              Mobile 2D Mode
+            </button>
+          )}
+        </>
       )}
     </div>
   );

@@ -2,18 +2,18 @@
 
 @layer base {
   body {
-    background-color: #050508;
-    color: #f8fafc;
+    background-color: #09090b;
+    color: #f4f4f5;
     font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     overflow-x: hidden;
     -webkit-font-smoothing: antialiased;
     background-image: 
-      radial-gradient(at 10% 10%, rgba(255, 0, 127, 0.08) 0px, transparent 40%),
-      radial-gradient(at 90% 90%, rgba(255, 105, 180, 0.06) 0px, transparent 40%);
+      radial-gradient(at 20% 20%, rgba(255, 255, 255, 0.03) 0px, transparent 50%),
+      radial-gradient(at 80% 80%, rgba(200, 200, 200, 0.02) 0px, transparent 50%);
   }
 }
 
-/* Minimalist Dark Scrollbars */
+/* Calming Monochrome Scrollbars */
 ::-webkit-scrollbar {
   width: 5px;
   height: 5px;
@@ -29,7 +29,7 @@
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #ff2768;
+  background: #52525b;
 }
 
 @keyframes fadeIn {
@@ -41,11 +41,7 @@
   animation: fadeIn 0.25s ease-out forwards;
 }
 
-/* Pink Glow Effect Utility */
-.pink-glow {
-  box-shadow: 0 0 25px rgba(255, 39, 104, 0.25);
-}
-
-.pink-glow-sm {
-  box-shadow: 0 0 12px rgba(255, 39, 104, 0.2);
+/* Calming Soft Glow */
+.calm-glow {
+  box-shadow: 0 0 20px rgba(255, 255, 255, 0.05);
 }

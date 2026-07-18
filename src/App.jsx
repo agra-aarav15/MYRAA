@@ -1,12 +1,12 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { 
   Sparkles, Eye, Settings as SettingsIcon, Send, Bot, User, 
-  Mic, MicOff, Volume2, VolumeX, Monitor, ShieldCheck
+  Mic, MicOff, Volume2, VolumeX
 } from 'lucide-react';
 
 import AvatarCanvas from './components/AvatarCanvas';
 import SettingsModal from './components/SettingsModal';
-import { sendAiChatMessage } from './services/aiProvider';
+import { sendAiChatMessage, cleanAiResponseText } from './services/aiProvider';
 
 export default function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -21,12 +21,13 @@ export default function App() {
   const [liveSpeechText, setLiveSpeechText] = useState('');
 
   const recognitionRef = useRef(null);
+  const silenceTimerRef = useRef(null);
 
   // Chat State
   const [messages, setMessages] = useState([
     {
       role: 'assistant',
-      content: `Hello darling! I'm MYRAA, your 3D companion. I can see your screen, write code, run commands, and talk to you in real time! What are we working on? 💕`,
+      content: `Hello. I am MYRAA, your AI companion. I am listening continuously and standing by to help you with code, screen analysis, or computer control. What shall we do?`,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     }
   ]);
@@ -36,12 +37,12 @@ export default function App() {
   const [avatarExpression, setAvatarExpression] = useState('happy');
   const [attachedScreenshot, setAttachedScreenshot] = useState(null);
 
-  // Continuous Microphone Setup
+  // Continuous Microphone Setup with Auto-Silence End Detection
   useEffect(() => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (SpeechRecognition) {
       const recognition = new SpeechRecognition();
-      recognition.continuous = true; // Continuous Hands-Free Microphone Listening
+      recognition.continuous = true;
       recognition.interimResults = true;
       recognition.lang = 'en-US';
 
@@ -52,21 +53,20 @@ export default function App() {
         }
         setLiveSpeechText(current);
 
-        if (event.results[event.results.length - 1].isFinal) {
+        // Auto silence detection: 1.2s of silence automatically sends command
+        if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+        silenceTimerRef.current = setTimeout(() => {
           const finalSpeech = current.trim();
           if (finalSpeech) {
             handleSendMessage(finalSpeech);
             setLiveSpeechText('');
           }
-        }
+        }, 1200);
       };
 
-      recognition.onerror = (err) => {
-        console.warn('Mic notice:', err);
-      };
+      recognition.onerror = (err) => console.warn('Mic status:', err);
 
       recognition.onend = () => {
-        // Automatically restart listening if continuous mode is active
         if (isListening) {
           try { recognition.start(); } catch (e) {}
         }
@@ -97,14 +97,13 @@ export default function App() {
     }
   };
 
-  // High-Clarity Natural Human Female Voice Filtering (100% Free Browser Synthesis)
+  // Natural Human Female Voice Filtering
   useEffect(() => {
     const loadVoices = () => {
       if (typeof window.speechSynthesis === 'undefined') return;
       const voices = window.speechSynthesis.getVoices();
       setVoiceList(voices);
       if (voices.length > 0) {
-        // Priority to natural human female voices
         const naturalVoice = voices.find(v => 
           v.name.includes('Natural') || 
           v.name.includes('Jenny') || 
@@ -127,18 +126,20 @@ export default function App() {
     };
   }, []);
 
-  // Speak AI Response with Natural Voice Cadence & Strict Cleanup
+  // Speak Sanitized Response
   const speakText = (text) => {
     if (!isAutoSpeak || !text || typeof window.speechSynthesis === 'undefined') {
       setIsSpeaking(false);
       return;
     }
 
-    window.speechSynthesis.cancel(); // Reset ongoing speech first
-
-    const cleanText = text.replace(/```[\s\S]*?```/g, 'I have generated code for you.')
-                          .replace(/[*_#`[\]()]/g, '')
-                          .trim();
+    window.speechSynthesis.cancel();
+    
+    // Sanitize text completely before speaking
+    const cleanText = cleanAiResponseText(text)
+      .replace(/```[\s\S]*?```/g, 'I have generated code for you.')
+      .replace(/[*_#`[\]()]/g, '')
+      .trim();
 
     if (!cleanText) {
       setIsSpeaking(false);
@@ -146,8 +147,8 @@ export default function App() {
     }
 
     const utterance = new SpeechSynthesisUtterance(cleanText);
-    utterance.pitch = 1.05; // Natural human pitch (not robotic high pitch)
-    utterance.rate = 1.0;   // Natural human rate
+    utterance.pitch = 1.0; // Calming natural human pitch
+    utterance.rate = 1.0;  // Calming natural speed
 
     const voiceObj = voiceList.find(v => v.name === selectedVoice);
     if (voiceObj) utterance.voice = voiceObj;
@@ -181,30 +182,24 @@ export default function App() {
 
     try {
       const history = messages.map(m => ({ role: m.role, content: m.content }));
-      const aiReply = await sendAiChatMessage(textToSend, history, screenToUse);
+      const rawAiReply = await sendAiChatMessage(textToSend, history, screenToUse);
+      const sanitizedReply = cleanAiResponseText(rawAiReply);
 
       const assistantMsgObj = {
         role: 'assistant',
-        content: aiReply,
+        content: sanitizedReply,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       };
 
       setMessages(prev => [...prev, assistantMsgObj]);
-      speakText(aiReply);
-
-      if (aiReply.toLowerCase().includes('love') || aiReply.toLowerCase().includes('darling') || aiReply.toLowerCase().includes('💕')) {
-        setAvatarExpression('blush');
-      } else if (aiReply.toLowerCase().includes('code') || aiReply.toLowerCase().includes('function') || aiReply.toLowerCase().includes('executing')) {
-        setAvatarExpression('focus');
-      } else {
-        setAvatarExpression('happy');
-      }
+      speakText(sanitizedReply);
+      setAvatarExpression('happy');
     } catch (err) {
       setMessages(prev => [
         ...prev,
         {
           role: 'assistant',
-          content: `Glitch notice: ${err.message}. Please verify API settings or use Simulation mode!`,
+          content: `Notice: ${err.message}. Please verify API settings or use Simulation mode!`,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         }
       ]);
@@ -213,18 +208,17 @@ export default function App() {
     }
   };
 
-  // Screen Capture & Browser WebRTC Screen Share Fallback
+  // Screen Vision Capture & Screen Share
   const handleCaptureScreenVision = async () => {
     setIsCapturingScreen(true);
 
-    // Try backend capture first
     try {
-      const backendHost = window.location.hostname || 'localhost';
+      const backendHost = (typeof window !== 'undefined' && window.location.hostname) ? window.location.hostname : 'localhost';
       const res = await fetch(`http://${backendHost}:3001/api/screen/capture`);
       const data = await res.json();
       if (data.success) {
         setAttachedScreenshot(data.data);
-        handleSendMessage('MYRAA, inspect my desktop screen and tell me what you see or help me fix any active errors!', data.data);
+        handleSendMessage('MYRAA, inspect my desktop screen and tell me what you see or help me fix any active errors.', data.data);
         setIsCapturingScreen(false);
         return;
       }
@@ -232,7 +226,6 @@ export default function App() {
       console.log('Backend screen capture fetch fallback to browser WebRTC:', err);
     }
 
-    // WebRTC Browser Screen Share Fallback (Zero-install, works everywhere)
     try {
       const stream = await navigator.mediaDevices.getDisplayMedia({ video: { cursor: 'always' } });
       const video = document.createElement('video');
@@ -249,9 +242,9 @@ export default function App() {
       stream.getTracks().forEach(track => track.stop());
 
       setAttachedScreenshot(base64Data);
-      handleSendMessage('MYRAA, inspect this screen share snapshot and help me with my code!', base64Data);
+      handleSendMessage('MYRAA, inspect this screen share snapshot and help me with my work.', base64Data);
     } catch (err) {
-      console.warn('WebRTC screen share cancelled or error:', err);
+      console.warn('WebRTC screen share notice:', err);
     } finally {
       setIsCapturingScreen(false);
     }
@@ -260,8 +253,8 @@ export default function App() {
   const latestAssistantMessage = [...messages].reverse().find(m => m.role === 'assistant');
 
   return (
-    <div className="relative w-screen h-screen max-h-screen bg-black text-slate-100 overflow-hidden font-sans select-none">
-      {/* 1. Full-Screen 3D Anime Companion Avatar Stage */}
+    <div className="relative w-screen h-screen max-h-screen bg-zinc-950 text-zinc-100 overflow-hidden font-sans select-none">
+      {/* 1. 3D Companion Avatar Stage */}
       <div className="absolute inset-0 z-0">
         <AvatarCanvas 
           expression={avatarExpression} 
@@ -269,18 +262,18 @@ export default function App() {
         />
       </div>
 
-      {/* 2. Top Status Bar */}
-      <header className="absolute top-0 left-0 right-0 z-20 flex items-center justify-between px-6 py-4 bg-gradient-to-b from-black/90 via-black/40 to-transparent">
+      {/* 2. Calming Top Status Bar */}
+      <header className="absolute top-0 left-0 right-0 z-20 flex items-center justify-between px-6 py-4 bg-gradient-to-b from-zinc-950/90 via-zinc-950/40 to-transparent">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-xl bg-pink-600 flex items-center justify-center shadow-lg shadow-pink-600/40">
-            <Sparkles className="w-4 h-4 text-white animate-pulse" />
+          <div className="w-8 h-8 rounded-xl bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-200 shadow-md">
+            <Sparkles className="w-4 h-4 text-zinc-300" />
           </div>
           <div>
-            <h1 className="font-black text-sm tracking-widest text-white uppercase flex items-center gap-1.5">
-              MYRAA <span className="text-pink-500 font-normal">3D AI</span>
+            <h1 className="font-bold text-sm tracking-widest text-zinc-100 uppercase flex items-center gap-1.5">
+              MYRAA <span className="text-zinc-400 font-normal">AI</span>
             </h1>
-            <p className="text-[10px] text-zinc-400 font-mono tracking-wider flex items-center gap-1">
-              <span className={`w-1.5 h-1.5 rounded-full ${isSpeaking ? 'bg-pink-500 animate-ping' : 'bg-pink-500'}`} />
+            <p className="text-[10px] text-zinc-500 font-mono tracking-wider flex items-center gap-1">
+              <span className={`w-1.5 h-1.5 rounded-full ${isSpeaking ? 'bg-zinc-300 animate-ping' : 'bg-zinc-400'}`} />
               {isProcessing ? 'THINKING...' : (isSpeaking ? 'TALKING...' : 'ONLINE & LISTENING')}
             </p>
           </div>
@@ -292,28 +285,27 @@ export default function App() {
             if (isAutoSpeak) window.speechSynthesis?.cancel();
             setIsAutoSpeak(!isAutoSpeak);
           }}
-          className={`px-3.5 py-1.5 rounded-xl border text-xs font-bold transition flex items-center gap-1.5 ${
-            isAutoSpeak ? 'bg-zinc-900/90 border-pink-500/50 text-pink-400' : 'bg-zinc-900/90 border-zinc-800 text-zinc-500'
+          className={`px-3.5 py-1.5 rounded-xl border text-xs font-semibold transition flex items-center gap-1.5 ${
+            isAutoSpeak ? 'bg-zinc-900 border-zinc-700 text-zinc-200' : 'bg-zinc-900 border-zinc-800 text-zinc-500'
           }`}
         >
-          {isAutoSpeak ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
+          {isAutoSpeak ? <Volume2 className="w-3.5 h-3.5 text-zinc-300" /> : <VolumeX className="w-3.5 h-3.5" />}
           <span>{isAutoSpeak ? 'Voice ON' : 'Muted'}</span>
         </button>
       </header>
 
-      {/* 3. Animated Sideways Glass Response Card (Right Side of Screen) */}
+      {/* 3. Calming Sideways Response Card (Right Side) */}
       {latestAssistantMessage && (
-        <div className="absolute top-24 right-6 md:right-12 z-20 max-w-md w-80 md:w-96 animate-fade-in transition-all duration-300">
-          <div className="bg-zinc-950/90 border border-pink-500/40 p-5 rounded-3xl backdrop-blur-2xl shadow-2xl shadow-pink-600/15">
-            <div className="flex items-center justify-between pb-2 mb-2 border-b border-zinc-800/80">
+        <div className="absolute top-20 right-4 md:right-10 z-20 max-w-md w-80 md:w-96 animate-fade-in transition-all duration-300">
+          <div className="bg-zinc-950/95 border border-zinc-800 p-5 rounded-3xl backdrop-blur-2xl shadow-2xl">
+            <div className="flex items-center justify-between pb-2 mb-2 border-b border-zinc-800">
               <div className="flex items-center gap-2">
-                <span className="text-base">💖</span>
-                <span className="text-xs font-bold text-pink-400 uppercase tracking-wider">MYRAA</span>
+                <span className="text-xs font-bold text-zinc-300 uppercase tracking-wider">MYRAA</span>
               </div>
-              {isSpeaking && <span className="text-[10px] text-pink-400 animate-pulse font-mono">Speaking...</span>}
+              {isSpeaking && <span className="text-[10px] text-zinc-400 animate-pulse font-mono">Speaking...</span>}
             </div>
             
-            <p className="text-xs text-zinc-100 leading-relaxed whitespace-pre-wrap font-sans">
+            <p className="text-xs text-zinc-200 leading-relaxed whitespace-pre-wrap font-sans">
               {latestAssistantMessage.content}
             </p>
 
@@ -324,21 +316,21 @@ export default function App() {
         </div>
       )}
 
-      {/* Live Continuous Speech Listening Indicator */}
+      {/* Live Continuous Speech Indicator */}
       {liveSpeechText && (
-        <div className="absolute top-24 left-6 z-20 bg-zinc-950/90 border border-pink-500/40 px-4 py-2 rounded-2xl text-xs text-pink-400 italic shadow-xl backdrop-blur-md max-w-xs animate-fade-in">
+        <div className="absolute top-20 left-6 z-20 bg-zinc-950/95 border border-zinc-800 px-4 py-2 rounded-2xl text-xs text-zinc-300 italic shadow-xl backdrop-blur-md max-w-xs animate-fade-in">
           🎙️ Listening: "{liveSpeechText}"
         </div>
       )}
 
-      {/* 4. Ultra-Sleek Pill Action Bar (Bottom Center - Arrow button removed as requested!) */}
+      {/* 4. Calming Pill Action Bar (Bottom Center) */}
       <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-20 w-full max-w-xl px-4">
-        <div className="bg-zinc-950/90 border border-zinc-800 focus-within:border-pink-500 p-2 rounded-full backdrop-blur-2xl shadow-2xl flex items-center gap-2 transition">
-          {/* Screen Vision & WebRTC Share */}
+        <div className="bg-zinc-950/95 border border-zinc-800 focus-within:border-zinc-600 p-2 rounded-full backdrop-blur-2xl shadow-2xl flex items-center gap-2 transition">
+          {/* Screen Vision Button */}
           <button
             onClick={handleCaptureScreenVision}
             disabled={isCapturingScreen}
-            className="p-2.5 rounded-full bg-zinc-900 hover:bg-zinc-800 text-pink-400 border border-zinc-800 hover:border-pink-500/50 transition shadow-md shrink-0 flex items-center gap-1"
+            className="p-2.5 rounded-full bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-800 hover:border-zinc-700 transition shadow-md shrink-0 flex items-center gap-1"
             title="Inspect Desktop / Share Screen"
           >
             <Eye className={`w-4 h-4 ${isCapturingScreen ? 'animate-spin' : ''}`} />
@@ -349,38 +341,38 @@ export default function App() {
             onClick={toggleListening}
             className={`p-2.5 rounded-full border transition shrink-0 flex items-center justify-center ${
               isListening 
-                ? 'bg-pink-600 border-pink-500 text-white animate-pulse shadow-lg shadow-pink-600/40' 
-                : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-white'
+                ? 'bg-zinc-800 border-zinc-600 text-zinc-100 animate-pulse shadow-md' 
+                : 'bg-zinc-900 border-zinc-800 text-zinc-500 hover:text-zinc-300'
             }`}
             title="Continuous Mic (Hands-Free Listening)"
           >
-            {isListening ? <Mic className="w-4 h-4 text-white" /> : <MicOff className="w-4 h-4 text-zinc-400" />}
+            {isListening ? <Mic className="w-4 h-4 text-zinc-100" /> : <MicOff className="w-4 h-4 text-zinc-500" />}
           </button>
 
-          {/* Typewriter Input Text Field */}
+          {/* Typewriter Input Field */}
           <input
             type="text"
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
-            placeholder={isListening ? "Listening continuously... speak anytime!" : "Talk to MYRAA..."}
-            className="flex-1 bg-transparent text-xs text-white placeholder-zinc-500 px-2 focus:outline-none"
+            placeholder={isListening ? "Listening continuously..." : "Talk to MYRAA..."}
+            className="flex-1 bg-transparent text-xs text-zinc-100 placeholder-zinc-500 px-2 focus:outline-none"
           />
 
-          {/* AI Settings Gear Button */}
+          {/* Settings Button */}
           <button
             onClick={() => setIsSettingsOpen(true)}
-            className="p-2.5 rounded-full bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-pink-400 border border-zinc-800 transition shrink-0"
+            className="p-2.5 rounded-full bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 border border-zinc-800 transition shrink-0"
             title="AI Brain & API Settings"
           >
             <SettingsIcon className="w-4 h-4" />
           </button>
 
-          {/* Send Message Button */}
+          {/* Send Button */}
           <button
             onClick={() => handleSendMessage()}
             disabled={isProcessing || (!inputText.trim() && !attachedScreenshot)}
-            className="p-2.5 rounded-full bg-pink-600 hover:bg-pink-500 text-white shadow-lg shadow-pink-600/30 transition disabled:opacity-40 shrink-0"
+            className="p-2.5 rounded-full bg-zinc-100 hover:bg-zinc-200 text-zinc-950 shadow-md transition disabled:opacity-40 shrink-0"
           >
             <Send className="w-4 h-4" />
           </button>
