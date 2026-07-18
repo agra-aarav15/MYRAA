@@ -1,3 +1,6 @@
+# Zip archives
+*.zip
+
 # Logs
 logs
 *.log
