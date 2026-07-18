@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
@@ -7,8 +7,8 @@ export default function AvatarCanvas({
   isSpeaking = false
 }) {
   const containerRef = useRef(null);
-  const sceneRef = useRef(null);
   const modelRef = useRef(null);
+  const bonesRef = useRef({});
   const mouseRef = useRef({ x: 0, y: 0 });
   const isSpeakingRef = useRef(isSpeaking);
   const expressionRef = useRef(expression);
@@ -17,216 +17,303 @@ export default function AvatarCanvas({
   const [isMobile, setIsMobile] = useState(false);
   const [mobileLowPower, setMobileLowPower] = useState(false);
 
-  // Keep refs in sync with props
   useEffect(() => { isSpeakingRef.current = isSpeaking; }, [isSpeaking]);
   useEffect(() => { expressionRef.current = expression; }, [expression]);
 
-  // Mobile Detection
+  // Mobile detection
   useEffect(() => {
-    const checkMobile = () => {
-      const mobile = window.innerWidth < 768 || /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-      setIsMobile(mobile);
-      if (mobile) setMobileLowPower(true);
+    const check = () => {
+      const m = window.innerWidth < 768 || /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+      setIsMobile(m);
+      if (m) setMobileLowPower(true);
     };
-    checkMobile();
-    window.addEventListener('resize', checkMobile);
-    return () => window.removeEventListener('resize', checkMobile);
+    check();
+    window.addEventListener('resize', check);
+    return () => window.removeEventListener('resize', check);
   }, []);
 
   useEffect(() => {
     if (!containerRef.current || mobileLowPower) return;
 
-    const width = containerRef.current.clientWidth;
-    const height = containerRef.current.clientHeight;
+    const w = containerRef.current.clientWidth;
+    const h = containerRef.current.clientHeight;
 
-    // Scene
     const scene = new THREE.Scene();
-    sceneRef.current = scene;
+    const camera = new THREE.PerspectiveCamera(28, w / h, 0.1, 100);
+    camera.position.set(0, 1.2, 2.8);
+    camera.lookAt(0, 1.0, 0);
 
-    // Camera — frame from roughly waist up, centered
-    const camera = new THREE.PerspectiveCamera(30, width / height, 0.1, 100);
-    camera.position.set(0, 1.1, 2.5);
-    camera.lookAt(0, 0.9, 0);
-
-    // Renderer
     const renderer = new THREE.WebGLRenderer({ antialias: !isMobile, alpha: true });
-    renderer.setSize(width, height);
+    renderer.setSize(w, h);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, isMobile ? 1 : 2));
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.1;
+    renderer.toneMappingExposure = 1.15;
     renderer.outputColorSpace = THREE.SRGBColorSpace;
 
     containerRef.current.innerHTML = '';
     containerRef.current.appendChild(renderer.domElement);
 
-    // === Lighting: warm, soft, studio-quality ===
-    const ambientLight = new THREE.AmbientLight(0xfff5ee, 0.8);
-    scene.add(ambientLight);
+    // Lighting — warm soft studio
+    scene.add(new THREE.AmbientLight(0xfff5ee, 0.9));
+    const key = new THREE.DirectionalLight(0xfff0e6, 1.6);
+    key.position.set(3, 5, 4);
+    scene.add(key);
+    const fill = new THREE.DirectionalLight(0xe8ecf0, 0.5);
+    fill.position.set(-3, 2, 2);
+    scene.add(fill);
+    const rim = new THREE.PointLight(0xffffff, 0.4, 8);
+    rim.position.set(0, 3, -2);
+    scene.add(rim);
 
-    // Main key light — warm, from upper-right
-    const keyLight = new THREE.DirectionalLight(0xfff0e6, 1.8);
-    keyLight.position.set(3, 5, 4);
-    scene.add(keyLight);
-
-    // Fill light — cool, subtle, from left
-    const fillLight = new THREE.DirectionalLight(0xe8ecf0, 0.6);
-    fillLight.position.set(-3, 2, 2);
-    scene.add(fillLight);
-
-    // Rim/back light — subtle edge highlight
-    const rimLight = new THREE.PointLight(0xffffff, 0.5, 8);
-    rimLight.position.set(0, 3, -2);
-    scene.add(rimLight);
-
-    // === Load the model ===
+    // Load model
     const loader = new GLTFLoader();
-    loader.load(
-      '/model/source/one_one.glb',
-      (gltf) => {
-        const model = gltf.scene;
-        modelRef.current = model;
+    loader.load('/model/source/one_one.glb', (gltf) => {
+      const model = gltf.scene;
+      modelRef.current = model;
 
-        // Compute bounding box to center & scale properly
-        const box = new THREE.Box3().setFromObject(model);
-        const size = box.getSize(new THREE.Vector3());
-        const center = box.getCenter(new THREE.Vector3());
+      // Scale & center
+      const box = new THREE.Box3().setFromObject(model);
+      const size = box.getSize(new THREE.Vector3());
+      const center = box.getCenter(new THREE.Vector3());
+      const scale = 1.8 / size.y;
+      model.scale.setScalar(scale);
+      model.position.x = -center.x * scale;
+      model.position.y = -box.min.y * scale;
+      model.position.z = -center.z * scale;
 
-        // Scale so model height is about 1.8 units (fills frame nicely)
-        const targetHeight = 1.8;
-        const scale = targetHeight / size.y;
-        model.scale.setScalar(scale);
+      // Collect bone references by name pattern
+      const bones = {};
+      model.traverse((node) => {
+        if (!node.isBone) return;
+        const n = node.name.toLowerCase();
 
-        // Center horizontally and sit feet on the ground
-        model.position.x = -center.x * scale;
-        model.position.y = -box.min.y * scale; // feet at y=0
-        model.position.z = -center.z * scale;
+        if (n.includes('head') && !n.includes('hair')) bones.head = node;
+        else if (n.includes('neck')) bones.neck = node;
+        else if (n.includes('eye_l') || n.includes('eye_l')) { if (n.includes('_l')) bones.eyeL = node; }
+        else if (n.includes('eye_r') || n.includes('eye_r')) { if (n.includes('_r')) bones.eyeR = node; }
+        else if (n.includes('spine') && !bones.spine) bones.spine = node;
+        else if (n.includes('chest') && !n.includes('upper') && !bones.chest) bones.chest = node;
+        else if (n.includes('upper chest') || (n.includes('upper') && n.includes('chest'))) bones.upperChest = node;
+        else if (n.includes('hips')) bones.hips = node;
 
-        // Improve material quality
-        model.traverse((child) => {
-          if (child.isMesh) {
-            child.castShadow = true;
-            child.receiveShadow = true;
-            if (child.material) {
-              child.material.needsUpdate = true;
-            }
-          }
-        });
+        // Arms — match "left arm" / "right arm" (upper arm)
+        if (n.includes('left arm') || (n === 'left arm_51')) bones.leftArm = node;
+        if (n.includes('right arm') || (n === 'right arm_70')) bones.rightArm = node;
+        if (n.includes('left shoulder')) bones.leftShoulder = node;
+        if (n.includes('right shoulder')) bones.rightShoulder = node;
+        if (n.includes('left elbow')) bones.leftElbow = node;
+        if (n.includes('right elbow')) bones.rightElbow = node;
+        if (n.includes('left wrist')) bones.leftWrist = node;
+        if (n.includes('right wrist')) bones.rightWrist = node;
 
-        scene.add(model);
-        setLoading(false);
-      },
-      undefined,
-      (err) => {
-        console.error('Model load error:', err);
-        setLoading(false);
+        // Hair chains for physics
+        if (n.includes('hair')) {
+          if (!bones.hairBones) bones.hairBones = [];
+          bones.hairBones.push(node);
+        }
+
+        // Skirt for cloth-like physics
+        if (n.includes('skirt')) {
+          if (!bones.skirtBones) bones.skirtBones = [];
+          bones.skirtBones.push(node);
+        }
+      });
+
+      // Also try exact name matching for eyes
+      model.traverse((node) => {
+        if (!node.isBone) return;
+        if (node.name === 'Eye_L_4') bones.eyeL = node;
+        if (node.name === 'Eye_R_5') bones.eyeR = node;
+      });
+
+      bonesRef.current = bones;
+
+      // === REST POSE: Arms down naturally ===
+      // The model likely has arms in T-pose. Rotate upper arms down along the body.
+      if (bones.leftArm) {
+        bones.leftArm.rotation.z = Math.PI / 2.8;   // rotate down
+        bones.leftArm.rotation.x = 0.15;              // slightly forward
+        bones.leftArm.rotation.y = 0;
       }
-    );
+      if (bones.rightArm) {
+        bones.rightArm.rotation.z = -Math.PI / 2.8;  // rotate down
+        bones.rightArm.rotation.x = 0.15;
+        bones.rightArm.rotation.y = 0;
+      }
+      // Slight natural elbow bend
+      if (bones.leftElbow) {
+        bones.leftElbow.rotation.x = 0;
+        bones.leftElbow.rotation.z = 0.15;
+      }
+      if (bones.rightElbow) {
+        bones.rightElbow.rotation.x = 0;
+        bones.rightElbow.rotation.z = -0.15;
+      }
 
-    // Mouse / touch tracking
-    const handlePointerMove = (e) => {
+      // Store initial rotations for animation blending
+      Object.keys(bones).forEach(key => {
+        const bone = bones[key];
+        if (bone && bone.isBone) {
+          bone.userData.restRotation = bone.rotation.clone();
+        }
+      });
+
+      // Material quality
+      model.traverse((child) => {
+        if (child.isMesh && child.material) {
+          child.material.needsUpdate = true;
+        }
+      });
+
+      scene.add(model);
+      setLoading(false);
+    }, undefined, (err) => {
+      console.error('Model load error:', err);
+      setLoading(false);
+    });
+
+    // Pointer tracking
+    const onPointerMove = (e) => {
       if (!containerRef.current) return;
-      const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-      const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+      const cx = e.touches ? e.touches[0].clientX : e.clientX;
+      const cy = e.touches ? e.touches[0].clientY : e.clientY;
       const rect = containerRef.current.getBoundingClientRect();
       mouseRef.current = {
-        x: ((clientX - rect.left) / rect.width) * 2 - 1,
-        y: -((clientY - rect.top) / rect.height) * 2 + 1,
+        x: ((cx - rect.left) / rect.width) * 2 - 1,
+        y: -((cy - rect.top) / rect.height) * 2 + 1,
       };
     };
+    window.addEventListener('mousemove', onPointerMove);
+    window.addEventListener('touchmove', onPointerMove, { passive: true });
 
-    window.addEventListener('mousemove', handlePointerMove);
-    window.addEventListener('touchmove', handlePointerMove, { passive: true });
-
-    // === Animation loop with real spring physics ===
+    // === Animation loop ===
     const clock = new THREE.Clock();
-    let animationFrameId;
+    let frameId;
+    let speakPhase = 0;
 
-    // Spring physics state
-    let breathPhase = 0;
-    let swayAngleY = 0;        // current horizontal sway
-    let swayVelocityY = 0;
-    let tiltAngleX = 0;        // current forward/back tilt
-    let tiltVelocityX = 0;
-    let speakBouncePhase = 0;
+    // Hair physics state
+    const hairPhysics = [];
 
     const animate = () => {
-      animationFrameId = requestAnimationFrame(animate);
-      const delta = Math.min(clock.getDelta(), 0.05); // clamp delta
-      const elapsed = clock.getElapsedTime();
+      frameId = requestAnimationFrame(animate);
+      const dt = Math.min(clock.getDelta(), 0.05);
+      const t = clock.getElapsedTime();
+      const bones = bonesRef.current;
 
-      if (!modelRef.current) {
+      if (!modelRef.current || !bones.hips) {
         renderer.render(scene, camera);
         return;
       }
 
-      const model = modelRef.current;
+      const lerp = (curr, target, speed) => curr + (target - curr) * Math.min(speed * dt * 60, 1);
 
-      // --- 1. Breathing: gentle vertical bob ---
-      breathPhase += delta * 1.8;
-      const breathOffset = Math.sin(breathPhase) * 0.006;
-
-      // --- 2. Eye-tracking / body turn toward mouse (spring-damped) ---
-      const targetSwayY = mouseRef.current.x * 0.15;  // look left/right
-      const targetTiltX = -mouseRef.current.y * 0.06;  // slight lean
-
-      const springK = 8;   // spring stiffness
-      const damping = 0.82; // damping factor
-
-      swayVelocityY += (targetSwayY - swayAngleY) * springK * delta;
-      swayVelocityY *= damping;
-      swayAngleY += swayVelocityY * delta;
-
-      tiltVelocityX += (targetTiltX - tiltAngleX) * springK * delta;
-      tiltVelocityX *= damping;
-      tiltAngleX += tiltVelocityX * delta;
-
-      // --- 3. Speaking animation: subtle rhythmic nod ---
-      let speakNod = 0;
-      let speakSway = 0;
-      if (isSpeakingRef.current) {
-        speakBouncePhase += delta * 6;
-        speakNod = Math.sin(speakBouncePhase) * 0.015;
-        speakSway = Math.sin(speakBouncePhase * 0.7) * 0.008;
-      } else {
-        // Gently decay the bounce phase
-        speakBouncePhase *= 0.95;
+      // --- 1. BREATHING: spine & chest gentle expand ---
+      const breathCycle = Math.sin(t * 1.6) * 0.008;
+      if (bones.spine) {
+        bones.spine.rotation.x = lerp(bones.spine.rotation.x, (bones.spine.userData.restRotation?.x || 0) + breathCycle, 0.05);
+      }
+      if (bones.chest) {
+        bones.chest.rotation.x = lerp(bones.chest.rotation.x, (bones.chest.userData.restRotation?.x || 0) + breathCycle * 0.6, 0.05);
       }
 
-      // --- 4. Idle micro-sway (so she never looks frozen) ---
-      const idleSwayY = Math.sin(elapsed * 0.5) * 0.008;
-      const idleSwayX = Math.sin(elapsed * 0.3 + 1.0) * 0.004;
+      // --- 2. HEAD TRACKING: follow mouse/touch ---
+      const targetHeadY = mouseRef.current.x * 0.3;   // left/right
+      const targetHeadX = -mouseRef.current.y * 0.15;  // up/down
+      if (bones.head) {
+        bones.head.rotation.y = lerp(bones.head.rotation.y, targetHeadY, 0.04);
+        bones.head.rotation.x = lerp(bones.head.rotation.x, (bones.head.userData.restRotation?.x || 0) + targetHeadX, 0.04);
+      }
+      // Neck follows head partially
+      if (bones.neck) {
+        bones.neck.rotation.y = lerp(bones.neck.rotation.y, targetHeadY * 0.3, 0.03);
+      }
 
-      // --- Apply all to model ---
-      model.rotation.y = swayAngleY + idleSwayY + speakSway;
-      model.rotation.x = tiltAngleX + idleSwayX + speakNod;
-      model.rotation.z = 0; // keep upright
+      // --- 3. EYE TRACKING ---
+      if (bones.eyeL) {
+        bones.eyeL.rotation.y = lerp(bones.eyeL.rotation.y, mouseRef.current.x * 0.15, 0.08);
+        bones.eyeL.rotation.x = lerp(bones.eyeL.rotation.x, -mouseRef.current.y * 0.1, 0.08);
+      }
+      if (bones.eyeR) {
+        bones.eyeR.rotation.y = lerp(bones.eyeR.rotation.y, mouseRef.current.x * 0.15, 0.08);
+        bones.eyeR.rotation.x = lerp(bones.eyeR.rotation.x, -mouseRef.current.y * 0.1, 0.08);
+      }
 
-      // Breathing: apply to position
-      const baseY = -0.0; // feet on ground
-      model.position.y = baseY + breathOffset;
+      // --- 4. SPEAKING ANIMATION: nod + subtle body sway ---
+      if (isSpeakingRef.current) {
+        speakPhase += dt * 5.5;
+        const nod = Math.sin(speakPhase) * 0.02;
+        const sway = Math.sin(speakPhase * 0.6) * 0.012;
+        if (bones.head) {
+          bones.head.rotation.x += nod;
+          bones.head.rotation.z = lerp(bones.head.rotation.z || 0, sway, 0.06);
+        }
+        if (bones.upperChest) {
+          bones.upperChest.rotation.x = lerp(bones.upperChest.rotation.x || 0, (bones.upperChest.userData.restRotation?.x || 0) + nod * 0.4, 0.05);
+        }
+      } else {
+        speakPhase *= 0.92;
+        if (bones.head) {
+          bones.head.rotation.z = lerp(bones.head.rotation.z || 0, 0, 0.04);
+        }
+      }
+
+      // --- 5. IDLE MICRO-SWAY: never look frozen ---
+      const idleY = Math.sin(t * 0.4) * 0.006;
+      if (bones.hips) {
+        bones.hips.rotation.y = lerp(bones.hips.rotation.y || 0, idleY, 0.03);
+      }
+
+      // --- 6. HAIR PHYSICS: secondary motion ---
+      if (bones.hairBones && bones.hairBones.length > 0) {
+        bones.hairBones.forEach((hb, i) => {
+          // Initialize physics state
+          if (!hairPhysics[i]) hairPhysics[i] = { vel: 0, angle: 0 };
+          const hp = hairPhysics[i];
+
+          // Hair swings based on head movement + gravity + wind
+          const headInfluence = (bones.head ? bones.head.rotation.y : 0) * 0.3;
+          const windNoise = Math.sin(t * 1.2 + i * 0.7) * 0.015;
+          const target = headInfluence + windNoise;
+          
+          const springForce = (target - hp.angle) * 12;
+          hp.vel += springForce * dt;
+          hp.vel *= 0.85; // damping
+          hp.angle += hp.vel * dt;
+          
+          hb.rotation.z = (hb.userData.restRotation?.z || 0) + hp.angle;
+          hb.rotation.x = (hb.userData.restRotation?.x || 0) + Math.sin(t * 0.8 + i) * 0.008;
+        });
+      }
+
+      // --- 7. SKIRT PHYSICS ---
+      if (bones.skirtBones && bones.skirtBones.length > 0) {
+        bones.skirtBones.forEach((sb, i) => {
+          const swing = Math.sin(t * 1.0 + i * 1.5) * 0.01;
+          sb.rotation.z = (sb.userData.restRotation?.z || 0) + swing;
+        });
+      }
 
       renderer.render(scene, camera);
     };
 
     animate();
 
-    // Resize handler
-    const handleResize = () => {
+    // Resize
+    const onResize = () => {
       if (!containerRef.current) return;
-      const w = containerRef.current.clientWidth;
-      const h = containerRef.current.clientHeight;
-      camera.aspect = w / h;
+      const nw = containerRef.current.clientWidth;
+      const nh = containerRef.current.clientHeight;
+      camera.aspect = nw / nh;
       camera.updateProjectionMatrix();
-      renderer.setSize(w, h);
+      renderer.setSize(nw, nh);
     };
-
-    window.addEventListener('resize', handleResize);
+    window.addEventListener('resize', onResize);
 
     return () => {
-      window.removeEventListener('mousemove', handlePointerMove);
-      window.removeEventListener('touchmove', handlePointerMove);
-      window.removeEventListener('resize', handleResize);
-      cancelAnimationFrame(animationFrameId);
+      window.removeEventListener('mousemove', onPointerMove);
+      window.removeEventListener('touchmove', onPointerMove);
+      window.removeEventListener('resize', onResize);
+      cancelAnimationFrame(frameId);
       renderer.dispose();
     };
   }, [mobileLowPower, isMobile]);
@@ -239,8 +326,7 @@ export default function AvatarCanvas({
             ✨
           </div>
           <span className="text-sm font-bold text-zinc-100">MYRAA</span>
-          <span className="text-xs text-zinc-500 mt-1">Mobile performance mode</span>
-          
+          <span className="text-xs text-zinc-500 mt-1">Mobile mode</span>
           <button
             onClick={() => setMobileLowPower(false)}
             className="mt-4 px-4 py-1.5 rounded-xl bg-zinc-900 border border-zinc-800 text-xs text-zinc-300 font-semibold hover:text-white transition"
