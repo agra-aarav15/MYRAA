@@ -31,21 +31,38 @@ export const saveAiConfig = (config) => {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
 };
 
-// Robust Text Sanitizer (Strips <think> tags, thinking blocks, and raw quote marks)
+// Bulletproof Text Sanitizer
+// Handles: <think>...</think>, unclosed <think>, "Thinking: ...", stray quotes, etc.
 export function cleanAiResponseText(rawText) {
   if (!rawText) return '';
-  let cleaned = String(rawText);
+  let t = String(rawText);
   
-  // Remove <think>...</think> tags and thoughts
-  cleaned = cleaned.replace(/<think>[\s\S]*?<\/think>/gi, '');
+  // 1. Remove <think>...</think> (closed tags, greedy across newlines)
+  t = t.replace(/<think>[\s\S]*?<\/think>/gi, '');
   
-  // Remove "Thinking: ..." or "Thought: ..." header blocks
-  cleaned = cleaned.replace(/^(Thought|Thinking):[\s\S]*?\n\n/gi, '');
+  // 2. Remove unclosed <think> — everything from <think> to end of string
+  t = t.replace(/<think>[\s\S]*/gi, '');
   
-  // Remove escaped quotes and outer quotes
-  cleaned = cleaned.replace(/^["']|["']$/g, '').trim();
+  // 3. Remove orphan </think> tags
+  t = t.replace(/<\/think>/gi, '');
   
-  return cleaned;
+  // 4. Remove "Thinking: ..." or "Thought: ..." blocks at the start
+  t = t.replace(/^(Thought|Thinking|Internal monologue)\s*:[\s\S]*?\n\n/gi, '');
+  
+  // 5. Remove <|thinking|>...</|thinking|> (DeepSeek style)
+  t = t.replace(/<\|thinking\|>[\s\S]*?<\|\/thinking\|>/gi, '');
+  t = t.replace(/<\|thinking\|>[\s\S]*/gi, '');
+  
+  // 6. Strip leading/trailing quotes that wrap the whole response
+  t = t.trim();
+  if ((t.startsWith('"') && t.endsWith('"')) || (t.startsWith("'") && t.endsWith("'"))) {
+    t = t.slice(1, -1);
+  }
+  
+  // 7. Clean up extra whitespace left behind
+  t = t.replace(/^\s*\n+/, '').replace(/\n{3,}/g, '\n\n').trim();
+  
+  return t;
 }
 
 const SYSTEM_PROMPT = `You are MYRAA, a calm, intelligent, and warm AI companion.

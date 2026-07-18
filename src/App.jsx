@@ -358,20 +358,22 @@ export default function App() {
         </button>
       </header>
 
-      {/* Response card — right side */}
+      {/* Response card — right side, scrollable */}
       {latestReply && (
-        <div className="absolute top-16 right-3 md:right-8 z-20 w-72 md:w-80 animate-fade-in">
-          <div className="bg-zinc-950/90 border border-zinc-800/60 p-4 rounded-2xl backdrop-blur-xl shadow-2xl">
-            <div className="flex items-center justify-between pb-1.5 mb-2 border-b border-zinc-800/50">
+        <div className="absolute top-16 right-3 md:right-8 z-20 w-72 md:w-80 animate-fade-in" style={{ maxHeight: 'calc(100vh - 140px)' }}>
+          <div className="bg-zinc-950/90 border border-zinc-800/60 p-4 rounded-2xl backdrop-blur-xl shadow-2xl flex flex-col" style={{ maxHeight: 'calc(100vh - 140px)' }}>
+            <div className="flex items-center justify-between pb-1.5 mb-2 border-b border-zinc-800/50 shrink-0">
               <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-widest">MYRAA</span>
               {isSpeaking && (
                 <span className="text-[9px] text-emerald-400/80 animate-pulse font-mono">speaking</span>
               )}
             </div>
-            <p className="text-[11px] text-zinc-300 leading-relaxed whitespace-pre-wrap">
-              {latestReply.content}
-            </p>
-            <span className="block text-[8px] text-zinc-600 mt-2 text-right">{latestReply.timestamp}</span>
+            <div className="overflow-y-auto flex-1 pr-1" style={{ maxHeight: 'calc(100vh - 220px)' }}>
+              <p className="text-[11px] text-zinc-300 leading-relaxed whitespace-pre-wrap">
+                {latestReply.content}
+              </p>
+            </div>
+            <span className="block text-[8px] text-zinc-600 mt-2 text-right shrink-0">{latestReply.timestamp}</span>
           </div>
         </div>
       )}
