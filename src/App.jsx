@@ -427,23 +427,14 @@ export default function App() {
     }
   }, [isAutoSpeak]);
 
-  const handleToggleListening = () => {
-    if (liveStatus === 'connected' && liveEngineRef.current) {
-      liveEngineRef.current.toggleMic();
-      return;
-    }
+  // Continuous auto-listen mode: click mic once → it listens, auto-submits, Myraa responds, then listens again
+  const continuousListenRef = useRef(false);
 
-    // Web Speech Recognition Fallback for Text Mode ("mic input is none so fix it")
+  const startSpeechRecognition = useCallback(() => {
     const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRec) {
-      alert("Speech Recognition is not supported in this browser. Please use Chrome/Edge or connect to Live mode!");
-      return;
-    }
-    if (isListening && speechRecognitionRef.current) {
-      try { speechRecognitionRef.current.stop(); } catch(e) {}
-      speechRecognitionRef.current = null;
-      setIsListening(false);
-      return;
+    if (!SpeechRec) return;
+    if (speechRecognitionRef.current) {
+      try { speechRecognitionRef.current.abort(); } catch(e) {}
     }
     try {
       const rec = new SpeechRec();
@@ -451,9 +442,7 @@ export default function App() {
       rec.interimResults = true;
       rec.lang = 'en-US';
       let finalTranscript = '';
-      rec.onstart = () => {
-        setIsListening(true);
-      };
+      rec.onstart = () => setIsListening(true);
       rec.onresult = (event) => {
         let transcript = '';
         for (let i = event.resultIndex; i < event.results.length; ++i) {
@@ -467,16 +456,34 @@ export default function App() {
       rec.onend = () => {
         setIsListening(false);
         speechRecognitionRef.current = null;
-        const textToProcess = finalTranscript || inputText;
-        if (textToProcess && textToProcess.trim()) {
-          executeDirectCommand(textToProcess);
-          handleSendMessage(textToProcess);
+        if (finalTranscript && finalTranscript.trim()) {
+          executeDirectCommand(finalTranscript);
+          handleSendMessage(finalTranscript);
+        }
+        // Auto-restart listening after a brief pause (waits for Myraa to finish speaking)
+        if (continuousListenRef.current) {
+          const waitForSpeech = () => {
+            if (neuralAudioRef.current || window.speechSynthesis?.speaking) {
+              setTimeout(waitForSpeech, 300);
+            } else {
+              setTimeout(() => {
+                if (continuousListenRef.current) startSpeechRecognition();
+              }, 400);
+            }
+          };
+          waitForSpeech();
         }
       };
       rec.onerror = (err) => {
-        console.warn("Speech recognition error:", err);
+        console.warn("Speech recognition error:", err.error);
         setIsListening(false);
         speechRecognitionRef.current = null;
+        // Auto-retry on no-speech or network errors
+        if (continuousListenRef.current && (err.error === 'no-speech' || err.error === 'network')) {
+          setTimeout(() => {
+            if (continuousListenRef.current) startSpeechRecognition();
+          }, 500);
+        }
       };
       rec.start();
       speechRecognitionRef.current = rec;
@@ -484,6 +491,34 @@ export default function App() {
       console.error("Speech recognition start failed:", err);
       setIsListening(false);
     }
+  }, []);
+
+  const handleToggleListening = () => {
+    if (liveStatus === 'connected' && liveEngineRef.current) {
+      liveEngineRef.current.toggleMic();
+      return;
+    }
+
+    const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRec) {
+      alert("Speech Recognition is not supported in this browser. Please use Chrome/Edge or connect to Live mode!");
+      return;
+    }
+
+    // Toggle continuous listening mode
+    if (continuousListenRef.current) {
+      continuousListenRef.current = false;
+      if (speechRecognitionRef.current) {
+        try { speechRecognitionRef.current.abort(); } catch(e) {}
+        speechRecognitionRef.current = null;
+      }
+      setIsListening(false);
+      return;
+    }
+
+    continuousListenRef.current = true;
+    setIsAutoSpeak(true); // Ensure auto-speak is on when mic is on
+    startSpeechRecognition();
   };
 
   return (
@@ -628,25 +663,28 @@ export default function App() {
         
         {/* Floating Voice Indicator Pill */}
         <div className="flex items-center gap-3 px-5 py-2.5 rounded-3xl bg-zinc-950/85 border border-zinc-800/80 backdrop-blur-xl shadow-2xl pointer-events-auto">
-          {/* Microphone Toggle */}
+          {/* Microphone Toggle — Click once for continuous hands-free mode */}
           <button
             onClick={handleToggleListening}
             className={`p-3 rounded-2xl transition-all flex items-center justify-center ${
               isListening
                 ? 'bg-rose-500 text-white shadow-[0_0_20px_rgba(244,63,94,0.6)] animate-pulse scale-105'
-                : 'bg-zinc-900 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800'
+                : continuousListenRef.current
+                  ? 'bg-amber-600 text-white shadow-[0_0_15px_rgba(217,119,6,0.4)]'
+                  : 'bg-zinc-900 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800'
             }`}
+            title={continuousListenRef.current ? "Click to stop continuous listening" : "Click to start hands-free voice mode"}
           >
-            {isListening ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
+            {isListening || continuousListenRef.current ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
           </button>
 
           {/* Status Label */}
           <div className="flex flex-col px-2">
             <span className="text-xs font-semibold text-zinc-200 tracking-wide">
-              {isSpeaking ? 'MYRAA IS SPEAKING...' : isListening ? 'LISTENING TO AARAV...' : isProcessing ? 'THINKING...' : 'IDLE COMPANION'}
+              {isSpeaking ? 'MYRAA IS SPEAKING...' : isListening ? 'LISTENING...' : isProcessing ? 'THINKING...' : continuousListenRef.current ? 'WAITING TO LISTEN...' : 'TAP MIC FOR HANDS-FREE'}
             </span>
             <span className="text-[10px] text-zinc-500 font-mono">
-              {liveStatus === 'connected' ? 'GEMINI LIVE WS AUDIO' : 'TEXT & TTS FALLBACK'}
+              {liveStatus === 'connected' ? 'GEMINI LIVE WS AUDIO' : 'NEURAL VOICE (EDGE TTS)'}
             </span>
           </div>
 
@@ -727,7 +765,7 @@ export default function App() {
                 {msg.screenshot && (
                   <img src={msg.screenshot} alt="Visual Frame" className="w-full rounded-xl border border-zinc-800 object-cover max-h-32 my-1" />
                 )}
-                <div className="leading-relaxed whitespace-pre-wrap">{msg.content}</div>
+                <div className="leading-relaxed whitespace-pre-wrap">{(msg.content || '').replace(/\[emotion:\w+\]\s*/gi, '').replace(/^\*Response:\*\s*/i, '').trim()}</div>
               </div>
             ))}
             <div ref={chatBottomRef} />

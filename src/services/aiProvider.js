@@ -81,43 +81,46 @@ export function cleanAiResponseText(rawText) {
 export function extractEmotion(text) {
   if (!text) return { text: '', emotion: 'happy' };
 
-  // Check for explicit emotion tags
-  const tagMatch = text.match(/^\[emotion:(\w+)\]\s*/i);
+  // Strip common prefixes the AI adds
+  let cleaned = text.replace(/^\*?Response:?\*?\s*/i, '').trim();
+
+  // Check for explicit emotion tags anywhere in the text
+  const tagMatch = cleaned.match(/\[emotion:(\w+)\]\s*/i);
   if (tagMatch) {
     return {
-      text: text.replace(tagMatch[0], '').trim(),
+      text: cleaned.replace(/\[emotion:\w+\]\s*/gi, '').trim(),
       emotion: tagMatch[1].toLowerCase()
     };
   }
 
   // Fallback: keyword-based emotion detection
-  const lower = text.toLowerCase();
+  const lower = cleaned.toLowerCase();
 
   if (lower.includes('error') || lower.includes('hmm') || lower.includes('analyzing') ||
       lower.includes('let me think') || lower.includes('let me check')) {
-    return { text, emotion: 'thinking' };
+    return { text: cleaned, emotion: 'thinking' };
   }
   if (lower.includes('wow') || lower.includes('amazing') || lower.includes('awesome') ||
       lower.includes('excited') || lower.includes('can\'t wait')) {
-    return { text, emotion: 'excited' };
+    return { text: cleaned, emotion: 'excited' };
   }
   if (lower.includes('sorry') || lower.includes('unfortunately') || lower.includes('failed') ||
       lower.includes('sad') || lower.includes('miss you')) {
-    return { text, emotion: 'sad' };
+    return { text: cleaned, emotion: 'sad' };
   }
   if (lower.includes('blush') || lower.includes('embarrass') || lower.includes('hehe') ||
       lower.includes('shy') || lower.includes('flattered')) {
-    return { text, emotion: 'shy' };
+    return { text: cleaned, emotion: 'shy' };
   }
   if (lower.includes('careful') || lower.includes('warning') || lower.includes('dangerous') ||
       lower.includes('stop')) {
-    return { text, emotion: 'angry' };
+    return { text: cleaned, emotion: 'angry' };
   }
   if (lower.includes('listening') || lower.includes('go on') || lower.includes('tell me more')) {
-    return { text, emotion: 'listening' };
+    return { text: cleaned, emotion: 'listening' };
   }
 
-  return { text, emotion: 'happy' };
+  return { text: cleaned, emotion: 'happy' };
 }
 
 // =====================================================================

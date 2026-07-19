@@ -10,11 +10,23 @@
     "directories": {
       "output": "dist_electron"
     },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "server.js",
+      "memories.json",
+      "settings.json",
+      "public/**/*",
+      "node_modules/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "public/model",
+        "to": "model"
+      }
+    ],
     "win": {
-      "target": [
-        "nsis"
-      ],
-      "icon": "public/favicon.svg"
+      "target": ["nsis", "portable"]
     },
     "nsis": {
       "oneClick": false,

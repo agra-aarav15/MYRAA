@@ -393,20 +393,30 @@ export default function AvatarCanvas({
         bones.rightArm.rotation.z = lerp(bones.rightArm.rotation.z, (bones.rightArm.userData.restRotation?.z || 0.15) + poseState.rightArm.z, 0.05);
       }
 
-      // --- 5. SPEAKING ANIMATION ---
+      // --- 5. SPEAKING ANIMATION (subtle, human-like — NOT dog-like nodding) ---
       if (isSpeakingRef.current || expr === 'speaking') {
-        speakPhase += dt * (5.5 + moodEnergy * 2);
-        const nod = Math.sin(speakPhase) * 0.02 * (expr === 'speaking' || expr === 'excited' ? 1.5 : 1);
-        const sway = Math.sin(speakPhase * 0.6) * 0.012;
+        speakPhase += dt * (2.8 + moodEnergy * 0.8);
+        // Gentle micro-nod (very subtle, barely perceptible)
+        const microNod = Math.sin(speakPhase) * 0.005;
+        // Soft body sway while speaking (natural weight shift)
+        const bodySway = Math.sin(speakPhase * 0.35) * 0.008;
+        // Subtle shoulder emphasis
+        const shoulderPulse = Math.sin(speakPhase * 0.7) * 0.004;
         if (bones.head) {
-          bones.head.rotation.x += nod;
-          bones.head.rotation.z = lerp(bones.head.rotation.z || 0, sway + poseState.head.z, 0.06);
+          bones.head.rotation.x += microNod;
+        }
+        if (bones.chest) {
+          bones.chest.rotation.y = lerp(bones.chest.rotation.y || 0, bodySway, 0.03);
         }
         if (bones.upperChest) {
-          bones.upperChest.rotation.x = lerp(bones.upperChest.rotation.x || 0, (bones.upperChest.userData.restRotation?.x || 0) + nod * 0.4, 0.05);
+          bones.upperChest.rotation.x = lerp(bones.upperChest.rotation.x || 0, (bones.upperChest.userData.restRotation?.x || 0) + shoulderPulse, 0.04);
+        }
+        // Gentle hand gesture while speaking
+        if (bones.leftWrist) {
+          bones.leftWrist.rotation.z = lerp(bones.leftWrist.rotation.z || 0, (bones.leftWrist.userData.restRotation?.z || 0) + Math.sin(speakPhase * 0.5) * 0.04, 0.03);
         }
       } else {
-        speakPhase *= 0.92;
+        speakPhase *= 0.95;
       }
 
       // --- 6. IDLE MICRO-SWAY ---
@@ -416,24 +426,36 @@ export default function AvatarCanvas({
         bones.hips.rotation.y = lerp(bones.hips.rotation.y || 0, idleY, 0.03);
       }
 
-      // --- 7. HAIR PHYSICS ---
+      // --- 7. HAIR PHYSICS (bouncy, gravity-aware, head-responsive) ---
       if (bones.hairBones && bones.hairBones.length > 0) {
+        const headTurnVel = bones.head ? bones.head.rotation.y : 0;
         bones.hairBones.forEach((hb, i) => {
-          if (!hairPhysics[i]) hairPhysics[i] = { vel: 0, angle: 0 };
+          if (!hairPhysics[i]) hairPhysics[i] = { vel: 0, angle: 0, prevHeadY: 0 };
           const hp = hairPhysics[i];
 
-          const headInfluence = (bones.head ? bones.head.rotation.y : 0) * 0.3;
-          const exciteMotion = expr === 'excited' ? Math.sin(t * 3 + i) * 0.02 : 0;
-          const windNoise = Math.sin(t * 1.2 + i * 0.7) * 0.015 + exciteMotion;
-          const target = headInfluence + windNoise;
+          // Head rotation influence (hair follows head movement with inertia)
+          const headDelta = headTurnVel - (hp.prevHeadY || 0);
+          hp.prevHeadY = headTurnVel;
+
+          // Natural wind/movement noise  
+          const windLayer1 = Math.sin(t * 0.8 + i * 1.3) * 0.025;
+          const windLayer2 = Math.sin(t * 1.6 + i * 0.5) * 0.012;
+          const exciteMotion = expr === 'excited' ? Math.sin(t * 3 + i) * 0.035 : 0;
           
-          const springForce = (target - hp.angle) * 12;
-          hp.vel += springForce * dt;
-          hp.vel *= 0.85; 
+          // Gravity pull (hair hangs down slightly)
+          const gravityPull = 0.005 * Math.sin(i * 0.8);
+          
+          const target = headTurnVel * 0.4 + windLayer1 + windLayer2 + exciteMotion + gravityPull;
+          
+          // Spring physics with lower damping for bounce
+          const springForce = (target - hp.angle) * 18;
+          hp.vel += (springForce - headDelta * 60) * dt; // Head turn inertia
+          hp.vel *= 0.78; // Less damping = more bounce
           hp.angle += hp.vel * dt;
+          hp.angle = Math.max(-0.4, Math.min(0.4, hp.angle)); // Clamp
           
           hb.rotation.z = (hb.userData.restRotation?.z || 0) + hp.angle;
-          hb.rotation.x = (hb.userData.restRotation?.x || 0) + Math.sin(t * 0.8 + i) * 0.008;
+          hb.rotation.x = (hb.userData.restRotation?.x || 0) + Math.sin(t * 0.6 + i * 0.9) * 0.012 + gravityPull;
         });
       }
 
