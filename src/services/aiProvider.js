@@ -241,11 +241,11 @@ export async function sendAiChatMessage(userMessage, conversationHistory = [], s
 
   if (provider === 'groq') { apiKey = config.groqKey; model = config.groqModel || 'llama-3.2-90b-vision-preview'; }
   else if (provider === 'gemini') { apiKey = config.geminiKey; model = config.geminiModel; }
-  else if (provider === 'opencode-mimo') { apiKey = config.opencodeKey || config.openrouterKey; model = config.opencodeModel || 'opencode/mimo-vision-instruct:free'; }
+  else if (provider === 'opencode-mimo' || provider === 'opencode') { apiKey = config.opencodeKey || ''; model = config.opencodeModel || 'opencode/mimo-vision-instruct'; }
   else if (provider === 'openrouter') { apiKey = config.openrouterKey; model = config.openrouterModel; }
   else if (provider === 'custom') { apiKey = config.customKey; baseUrl = config.customUrl; model = config.customModel; }
 
-  if (!apiKey && provider !== 'custom') {
+  if (!apiKey && provider !== 'custom' && provider !== 'opencode-mimo' && provider !== 'opencode' && provider !== 'simulation') {
     return `[emotion:shy] Hey Aarav, please enter your ${provider.toUpperCase()} API key in Settings so I can respond properly! I'm ready whenever you are 💕`;
   }
 

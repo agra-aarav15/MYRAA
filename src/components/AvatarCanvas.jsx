@@ -42,9 +42,12 @@ export default function AvatarCanvas({
     const h = containerRef.current.clientHeight;
 
     const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(28, w / h, 0.1, 100);
-    camera.position.set(0, 1.2, 2.8);
-    camera.lookAt(0, 1.0, 0);
+    const aspect = w / h;
+    const baseFov = isMobile || aspect < 1 ? 34 : 30;
+    const camera = new THREE.PerspectiveCamera(baseFov, aspect, 0.1, 100);
+    const camZ = isMobile || aspect < 1 ? 3.1 : 2.75;
+    camera.position.set(0, 0.90, camZ);
+    camera.lookAt(0, 0.80, 0);
 
     const renderer = new THREE.WebGLRenderer({ antialias: !isMobile, alpha: true });
     renderer.setSize(w, h);
@@ -78,10 +81,10 @@ export default function AvatarCanvas({
       const box = new THREE.Box3().setFromObject(model);
       const size = box.getSize(new THREE.Vector3());
       const center = box.getCenter(new THREE.Vector3());
-      const scale = 1.8 / size.y;
+      const scale = 1.62 / size.y;
       model.scale.setScalar(scale);
       model.position.x = -center.x * scale;
-      model.position.y = -box.min.y * scale;
+      model.position.y = (-box.min.y * scale) - 0.15;
       model.position.z = -center.z * scale;
       model.rotation.y = Math.PI; // Make the model face forward directly toward Aarav!
 
@@ -452,7 +455,11 @@ export default function AvatarCanvas({
       if (!containerRef.current) return;
       const nw = containerRef.current.clientWidth;
       const nh = containerRef.current.clientHeight;
-      camera.aspect = nw / nh;
+      const newAspect = nw / nh;
+      camera.aspect = newAspect;
+      camera.fov = isMobile || newAspect < 1 ? 34 : 30;
+      const newCamZ = isMobile || newAspect < 1 ? 3.1 : 2.75;
+      camera.position.set(0, 0.90, newCamZ);
       camera.updateProjectionMatrix();
       renderer.setSize(nw, nh);
     };

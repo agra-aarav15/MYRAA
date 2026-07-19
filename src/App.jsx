@@ -55,6 +55,7 @@ export default function App() {
   const liveEngineRef = useRef(null);
   const latestCapturedFrameRef = useRef(null);
   const speechRecognitionRef = useRef(null);
+  const neuralAudioRef = useRef(null);
 
   useEffect(() => { messagesRef.current = messages; }, [messages]);
 
@@ -354,15 +355,44 @@ export default function App() {
     }
   }, [inputText, isProcessing, attachedScreenshot, isAutoSpeak, liveStatus]);
 
-  // Fallback TTS when offline / non-Live mode (Strictly Female voice)
-  const fallbackSpeakText = useCallback((text) => {
-    if (!window.speechSynthesis || !text) return;
-    window.speechSynthesis.cancel();
+  // High-Quality Neural TTS (Edge AnaNeural Female Voice) with browser TTS fallback
+  const fallbackSpeakText = useCallback(async (text) => {
+    if (!text || !isAutoSpeak) return;
 
+    // Stop any existing speech right away
+    if (neuralAudioRef.current) {
+      try { neuralAudioRef.current.pause(); } catch(e) {}
+      neuralAudioRef.current = null;
+    }
+    if (window.speechSynthesis) window.speechSynthesis.cancel();
+
+    try {
+      const backendHost = window?.location?.hostname || 'localhost';
+      const res = await fetch(`http://${backendHost}:3001/api/ai/tts`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, voice: 'en-US-AnaNeural' })
+      });
+      if (res.ok) {
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+        neuralAudioRef.current = audio;
+        audio.onplay = () => { setIsSpeaking(true); setAvatarExpression('speaking'); };
+        audio.onended = () => { setIsSpeaking(false); setAvatarExpression('happy'); URL.revokeObjectURL(url); neuralAudioRef.current = null; };
+        audio.onerror = () => { setIsSpeaking(false); setAvatarExpression('happy'); URL.revokeObjectURL(url); neuralAudioRef.current = null; };
+        await audio.play();
+        return;
+      }
+    } catch (e) {
+      console.warn("Neural TTS server unreachable, falling back to browser TTS:", e);
+    }
+
+    if (!window.speechSynthesis) return;
     const speakWithAvailableVoices = () => {
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.rate = 0.96;
-      utterance.pitch = 1.25; // Higher pitch for sweet female resonance
+      utterance.pitch = 1.25;
 
       const voices = window.speechSynthesis.getVoices();
       const femaleCandidates = voices.filter(v => {
@@ -382,11 +412,8 @@ export default function App() {
       utterance.onend = () => { setIsSpeaking(false); setAvatarExpression('happy'); };
       utterance.onerror = () => { setIsSpeaking(false); setAvatarExpression('happy'); };
 
-      // Chrome Windows bug workaround: resume after small delay if paused/stalled
       window.speechSynthesis.speak(utterance);
-      if (window.speechSynthesis.paused) {
-        window.speechSynthesis.resume();
-      }
+      if (window.speechSynthesis.paused) window.speechSynthesis.resume();
     };
 
     const currentVoices = window.speechSynthesis.getVoices();
@@ -398,7 +425,7 @@ export default function App() {
     } else {
       speakWithAvailableVoices();
     }
-  }, []);
+  }, [isAutoSpeak]);
 
   const handleToggleListening = () => {
     if (liveStatus === 'connected' && liveEngineRef.current) {
@@ -491,15 +518,25 @@ export default function App() {
             <span className="text-xs font-bold tracking-widest text-zinc-100 uppercase font-mono">MYRAA // AARAV</span>
           </div>
 
-          {/* Live Voice Connection Status */}
-          <div className={`px-2.5 py-1 rounded-xl text-[10px] font-mono uppercase tracking-wider flex items-center gap-1.5 border backdrop-blur-md ${
-            liveStatus === 'connected' ? 'bg-emerald-950/40 border-emerald-800/60 text-emerald-300' :
-            liveStatus === 'connecting' ? 'bg-amber-950/40 border-amber-800/60 text-amber-300' :
-            'bg-zinc-900/60 border-zinc-800 text-zinc-400'
-          }`}>
-            <Radio className={`w-3 h-3 ${liveStatus === 'connected' ? 'text-emerald-400 animate-pulse' : ''}`} />
-            <span>{liveStatus === 'connected' ? 'Live Voice (Aoede)' : liveStatus === 'connecting' ? 'Connecting...' : 'Text Mode'}</span>
-          </div>
+          {/* Live Voice Connection Status / Clickable Toggle */}
+          <button
+            onClick={() => {
+              if (liveStatus === 'connected') {
+                if (liveEngineRef.current) liveEngineRef.current.disconnect();
+              } else {
+                if (liveEngineRef.current) liveEngineRef.current.connect();
+              }
+            }}
+            className={`px-3 py-1.5 rounded-xl text-[10px] font-mono uppercase tracking-wider flex items-center gap-1.5 border backdrop-blur-md transition-all shadow-md cursor-pointer ${
+              liveStatus === 'connected' ? 'bg-emerald-950/60 border-emerald-600 text-emerald-300 hover:bg-emerald-900/60' :
+              liveStatus === 'connecting' ? 'bg-amber-950/60 border-amber-600 text-amber-300' :
+              'bg-zinc-900/80 border-zinc-700 text-zinc-300 hover:bg-zinc-800 hover:text-white'
+            }`}
+            title={liveStatus === 'connected' ? "Click to Disconnect Live Voice" : "Click to Connect Live Voice (Aoede)"}
+          >
+            <Radio className={`w-3.5 h-3.5 ${liveStatus === 'connected' ? 'text-emerald-400 animate-pulse' : ''}`} />
+            <span>{liveStatus === 'connected' ? 'Live Voice (Aoede)' : liveStatus === 'connecting' ? 'Connecting...' : 'Text & Neural Voice Mode'}</span>
+          </button>
         </div>
 
         {/* Action Buttons */}
@@ -616,12 +653,19 @@ export default function App() {
           {/* Audio Output Mute Toggle */}
           <button
             onClick={() => {
-              setIsAutoSpeak(!isAutoSpeak);
-              if (isSpeaking && liveEngineRef.current) liveEngineRef.current.stopPlayback();
+              const nextState = !isAutoSpeak;
+              setIsAutoSpeak(nextState);
+              if (!nextState || isSpeaking) {
+                if (liveEngineRef.current) liveEngineRef.current.stopPlayback();
+                if (neuralAudioRef.current) { try { neuralAudioRef.current.pause(); } catch(e){} neuralAudioRef.current = null; }
+                if (window.speechSynthesis) window.speechSynthesis.cancel();
+                setIsSpeaking(false);
+              }
             }}
             className={`p-2.5 rounded-xl transition ${
               isAutoSpeak ? 'text-emerald-400 bg-emerald-950/30' : 'text-zinc-500 bg-zinc-900'
             }`}
+            title={isAutoSpeak ? "Mute Myraa's Voice" : "Unmute Myraa's Voice"}
           >
             {isAutoSpeak ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
           </button>

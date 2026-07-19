@@ -8,6 +8,7 @@ import path from 'path';
 import fs from 'fs';
 import os from 'os';
 import { fileURLToPath } from 'url';
+import { MsEdgeTTS, OUTPUT_FORMAT } from 'msedge-tts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -470,6 +471,24 @@ app.post('/api/tools/execute', async (req, res) => {
 });
 
 // =====================================================================
+// High-Quality Neural TTS Endpoint (Microsoft Edge Neural Female Voice)
+// =====================================================================
+app.post('/api/ai/tts', async (req, res) => {
+  const { text, voice = 'en-US-AnaNeural' } = req.body;
+  if (!text) return res.status(400).json({ error: 'Text required' });
+  try {
+    const tts = new MsEdgeTTS();
+    await tts.setMetadata(voice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
+    const { audioStream } = await tts.toStream(text);
+    res.setHeader('Content-Type', 'audio/mpeg');
+    audioStream.pipe(res);
+  } catch (err) {
+    console.error('Edge TTS error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// =====================================================================
 // 7. Universal AI Provider Proxy (HTTP fallback for non-Live mode)
 // =====================================================================
 app.post('/api/ai/proxy', async (req, res) => {
@@ -491,12 +510,12 @@ app.post('/api/ai/proxy', async (req, res) => {
       endpointUrl = 'https://api.groq.com/openai/v1/chat/completions';
       headers['Authorization'] = `Bearer ${apiKey}`;
       bodyPayload = { model: model || 'llama-3.2-90b-vision-preview', messages, temperature, max_tokens: maxTokens };
-    } else if (provider === 'opencode-mimo') {
-      endpointUrl = baseUrl || 'https://openrouter.ai/api/v1/chat/completions';
-      headers['Authorization'] = `Bearer ${apiKey}`;
+    } else if (provider === 'opencode-mimo' || provider === 'opencode') {
+      endpointUrl = baseUrl || 'https://opencode.ai/zen/go/v1/chat/completions';
+      if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
       headers['HTTP-Referer'] = 'http://localhost:5173';
       headers['X-Title'] = 'MYRAA Assistant';
-      bodyPayload = { model: model || 'opencode/mimo-vision-instruct:free', messages, temperature, max_tokens: maxTokens };
+      bodyPayload = { model: model || 'opencode/mimo-vision-instruct', messages, temperature, max_tokens: maxTokens };
     } else if (provider === 'openrouter') {
       endpointUrl = 'https://openrouter.ai/api/v1/chat/completions';
       headers['Authorization'] = `Bearer ${apiKey}`;

@@ -11,7 +11,9 @@
       "output": "dist_electron"
     },
     "win": {
-      "target": ["nsis"],
+      "target": [
+        "nsis"
+      ],
       "icon": "public/favicon.svg"
     },
     "nsis": {
@@ -41,6 +43,7 @@
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "lucide-react": "^1.25.0",
+    "msedge-tts": "^2.0.7",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "three": "^0.185.1",

@@ -53,7 +53,7 @@ export default function SettingsModal({ isOpen, onClose, onOpenMemory }) {
   const providers = [
     { id: 'gemini', name: 'Google Gemini', desc: 'Gemini 2.0 Flash / Live Voice (Free Vision)', icon: '✦' },
     { id: 'groq', name: 'Groq Cloud', desc: 'Llama 3.2 Vision (Free Vision)', icon: '⚡' },
-    { id: 'opencode-mimo', name: 'OpenCode MIMO', desc: 'MIMO Multimodal with Free Vision', icon: '◈' },
+    { id: 'opencode-mimo', name: 'OpenCode AI (MIMO)', desc: 'Open-Source AI Provider (opencode.ai)', icon: '◈' },
     { id: 'openrouter', name: 'OpenRouter', desc: 'Free Multimodal Vision Models', icon: '◎' },
     { id: 'custom', name: 'Custom / Ollama', desc: 'Local Vision API Endpoint', icon: '⬡' },
     { id: 'simulation', name: 'Offline Mode', desc: 'No API needed', icon: '◇' },
@@ -220,29 +220,29 @@ export default function SettingsModal({ isOpen, onClose, onOpenMemory }) {
                 </div>
               )}
 
-              {config.activeProvider === 'opencode-mimo' && (
+              {(config.activeProvider === 'opencode-mimo' || config.activeProvider === 'opencode') && (
                 <div className="p-4 rounded-2xl bg-zinc-900/60 border border-zinc-800 space-y-3 animate-fade-in">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-semibold text-zinc-200">OpenCode MIMO Configuration (Multimodal Vision)</span>
-                    <a href="https://openrouter.ai/models" target="_blank" rel="noreferrer" className="text-[11px] text-emerald-400 hover:underline flex items-center gap-1">
-                      MIMO Endpoint <ExternalLink className="w-3 h-3" />
+                    <span className="text-xs font-semibold text-zinc-200">OpenCode AI Configuration (opencode.ai)</span>
+                    <a href="https://opencode.ai/docs" target="_blank" rel="noreferrer" className="text-[11px] text-emerald-400 hover:underline flex items-center gap-1">
+                      OpenCode Docs & Endpoint <ExternalLink className="w-3 h-3" />
                     </a>
                   </div>
                   <InputField
-                    label="API Key (OpenRouter or Custom MIMO Key)"
+                    label="OpenCode API Key (from opencode.ai / Zen / Go)"
                     type="password"
                     mono
-                    value={config.opencodeKey || config.openrouterKey || ''}
+                    value={config.opencodeKey || ''}
                     onChange={e => setConfig({ ...config, opencodeKey: e.target.value })}
-                    placeholder="sk-or-v1-..."
+                    placeholder="Enter opencode API key (optional for free public endpoints)..."
                   />
                   <InputField
                     label="Model Name"
                     mono
-                    value={config.opencodeModel || 'opencode/mimo-vision-instruct:free'}
+                    value={config.opencodeModel || 'opencode/mimo-vision-instruct'}
                     onChange={e => setConfig({ ...config, opencodeModel: e.target.value })}
                   />
-                  <span className="text-[10px] text-zinc-400 block">Routes via MIMO multimodal vision endpoint</span>
+                  <span className="text-[10px] text-zinc-400 block">Routes via official OpenCode AI endpoint (https://opencode.ai/zen/go/v1/chat/completions)</span>
                 </div>
               )}
 
