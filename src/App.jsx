@@ -1,16 +1,20 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { 
   Sparkles, Eye, Settings as SettingsIcon, Send,
-  Mic, MicOff, Volume2, VolumeX, MessageSquare, X, RefreshCw, Radio
+  Mic, MicOff, Volume2, VolumeX, MessageSquare, X, Radio, Brain, Globe
 } from 'lucide-react';
 
 import AvatarCanvas from './components/AvatarCanvas';
 import SettingsModal from './components/SettingsModal';
-import { sendAiChatMessage, cleanAiResponseText } from './services/aiProvider';
-import { addFactToMemory, getCompanionMemory } from './services/memoryStore';
+import MemoryDashboardModal from './components/MemoryDashboardModal';
+import BrowserAgentModal from './components/BrowserAgentModal';
+import { sendAiChatMessage, cleanAiResponseText, getAiConfig } from './services/aiProvider';
+import { addCategorizedMemory } from './services/memoryStore';
 
 export default function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isMemoryOpen, setIsMemoryOpen] = useState(false);
+  const [isBrowserOpen, setIsBrowserOpen] = useState(false);
   const [isCapturingScreen, setIsCapturingScreen] = useState(false);
   const [isContinuousScreen, setIsContinuousScreen] = useState(false);
   const [isChatPanelOpen, setIsChatPanelOpen] = useState(false);
@@ -23,7 +27,7 @@ export default function App() {
   const [selectedVoice, setSelectedVoice] = useState('');
   const [liveSpeechText, setLiveSpeechText] = useState('');
 
-  // Refs for callbacks
+  // Refs
   const isSpeakingRef = useRef(false);
   const isListeningRef = useRef(false);
   const isProcessingRef = useRef(false);
@@ -51,7 +55,7 @@ export default function App() {
   useEffect(() => { isProcessingRef.current = isProcessing; }, [isProcessing]);
   useEffect(() => { messagesRef.current = messages; }, [messages]);
 
-  // Auto-scroll chat panel to bottom
+  // Auto-scroll chat panel
   useEffect(() => {
     if (chatBottomRef.current) {
       chatBottomRef.current.scrollIntoView({ behavior: 'smooth' });
@@ -72,8 +76,13 @@ export default function App() {
     const screenToUse = screenshot || attachedScreenshot;
 
     // Detect and save user facts automatically
-    if (textToSend.toLowerCase().includes('my name is') || textToSend.toLowerCase().includes('i like')) {
-      addFactToMemory(textToSend);
+    const lower = textToSend.toLowerCase();
+    if (lower.includes('my name is') || lower.includes('i like') || lower.includes('i prefer')) {
+      addCategorizedMemory('identity', textToSend);
+    } else if (lower.includes('my goal is') || lower.includes('i want to achieve')) {
+      addCategorizedMemory('goal', textToSend);
+    } else if (lower.includes('working on') || lower.includes('building')) {
+      addCategorizedMemory('project', textToSend);
     }
 
     const userMsgObj = {
@@ -116,7 +125,7 @@ export default function App() {
   useEffect(() => { sendMessageRef.current = handleSendMessage; }, [handleSendMessage]);
 
   // ==============================
-  // Speech Recognition (Low Input Delay: 600ms threshold)
+  // Speech Recognition (Wake Phrase Activation Check)
   // ==============================
   useEffect(() => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -147,7 +156,15 @@ export default function App() {
         setLiveSpeechText(display);
       }
 
-      // Reduced input delay: 600ms silence threshold
+      // Check Wake Word activation if configured
+      const config = getAiConfig();
+      if (config.wakeWordEnabled && config.wakePhrase) {
+        const wakeLower = config.wakePhrase.toLowerCase();
+        if (display.toLowerCase().includes(wakeLower)) {
+          console.log('Wake word activated!');
+        }
+      }
+
       if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
       silenceTimerRef.current = setTimeout(() => {
         const text = (finalTranscript || interimTranscript).trim();
@@ -212,7 +229,7 @@ export default function App() {
   };
 
   // ==============================
-  // Voice Selection (Young Human Female Tone)
+  // Voice Selection (Young Female Tone)
   // ==============================
   useEffect(() => {
     const loadVoices = () => {
@@ -250,9 +267,7 @@ export default function App() {
     return () => { window.speechSynthesis?.cancel(); };
   }, []);
 
-  // ==============================
-  // Text-to-Speech (Young Female Pitch & Speed)
-  // ==============================
+  // Speak AI Response
   const speakText = useCallback((text) => {
     if (!isAutoSpeak || !text || typeof window.speechSynthesis === 'undefined') {
       setIsSpeaking(false);
@@ -275,8 +290,8 @@ export default function App() {
     }
 
     const utterance = new SpeechSynthesisUtterance(cleanText);
-    utterance.pitch = 1.15; // Cute, young natural female voice pitch
-    utterance.rate = 1.02;  // Natural human cadence
+    utterance.pitch = 1.15;
+    utterance.rate = 1.02;
 
     const voiceObj = voiceList.find(v => v.name === selectedVoice);
     if (voiceObj) utterance.voice = voiceObj;
@@ -288,9 +303,7 @@ export default function App() {
     window.speechSynthesis.speak(utterance);
   }, [isAutoSpeak, voiceList, selectedVoice]);
 
-  // ==============================
-  // Continuous Live Screen Stream (Auto-captures every 5 seconds)
-  // ==============================
+  // Continuous Screen Capture
   const captureScreenSnapshot = useCallback(async () => {
     try {
       const host = window.location.hostname || 'localhost';
@@ -376,13 +389,31 @@ export default function App() {
             {isContinuousScreen ? 'Live Vision ON' : 'Live Vision OFF'}
           </button>
 
+          {/* Memory Dashboard Button */}
+          <button
+            onClick={() => setIsMemoryOpen(true)}
+            className="px-3 py-1 rounded-lg border border-zinc-800 text-[10px] font-medium transition flex items-center gap-1.5 bg-zinc-900/60 text-zinc-400 hover:text-zinc-200"
+          >
+            <Brain className="w-3 h-3" />
+            Memory Bank
+          </button>
+
+          {/* Browser Agent Button */}
+          <button
+            onClick={() => setIsBrowserOpen(true)}
+            className="px-3 py-1 rounded-lg border border-zinc-800 text-[10px] font-medium transition flex items-center gap-1.5 bg-zinc-900/60 text-zinc-400 hover:text-zinc-200"
+          >
+            <Globe className="w-3 h-3" />
+            Browser Agent
+          </button>
+
           {/* Chat History Panel Toggle */}
           <button
             onClick={() => setIsChatPanelOpen(!isChatPanelOpen)}
             className="px-3 py-1 rounded-lg border border-zinc-800 text-[10px] font-medium transition flex items-center gap-1.5 bg-zinc-900/60 text-zinc-400 hover:text-zinc-200"
           >
             <MessageSquare className="w-3 h-3" />
-            Chat History
+            Chat Log
           </button>
 
           {/* Voice Mute Toggle */}
@@ -399,7 +430,7 @@ export default function App() {
         </div>
       </header>
 
-      {/* 3. Sideways Response Card (Right side, scrollable) */}
+      {/* 3. Sideways Response Card */}
       {latestReply && !isChatPanelOpen && (
         <div className="absolute top-16 right-3 md:right-8 z-20 w-72 md:w-80 animate-fade-in" style={{ maxHeight: 'calc(100vh - 140px)' }}>
           <div className="bg-zinc-950/90 border border-zinc-800/60 p-4 rounded-2xl backdrop-blur-xl shadow-2xl flex flex-col" style={{ maxHeight: 'calc(100vh - 140px)' }}>
@@ -419,7 +450,7 @@ export default function App() {
         </div>
       )}
 
-      {/* 4. Full Scrollable Chat History Panel (Drawer) */}
+      {/* 4. Full Scrollable Chat History Panel */}
       {isChatPanelOpen && (
         <div className="absolute top-16 right-3 md:right-8 bottom-20 z-30 w-80 md:w-96 bg-zinc-950/95 border border-zinc-800 p-4 rounded-3xl backdrop-blur-2xl shadow-2xl flex flex-col animate-fade-in">
           <div className="flex items-center justify-between pb-3 border-b border-zinc-800 shrink-0">
@@ -459,7 +490,7 @@ export default function App() {
       {/* 5. Bottom Action Bar */}
       <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 w-full max-w-md px-3">
         <div className="bg-zinc-950/90 border border-zinc-800/60 p-1.5 rounded-full backdrop-blur-xl shadow-2xl flex items-center gap-1.5">
-          {/* Manual Screen Vision */}
+          {/* Screen Vision */}
           <button
             onClick={handleCaptureScreen}
             disabled={isCapturingScreen}
@@ -492,7 +523,7 @@ export default function App() {
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
-            placeholder={isSpeaking ? "MYRAA is speaking..." : isListening ? "Listening continuously..." : "Talk to MYRAA..."}
+            placeholder={isSpeaking ? "Speaking..." : isListening ? "Listening continuously..." : "Talk to MYRAA..."}
             className="flex-1 bg-transparent text-[11px] text-zinc-100 placeholder-zinc-600 px-2 focus:outline-none min-w-0"
           />
 
@@ -515,7 +546,20 @@ export default function App() {
         </div>
       </div>
 
-      <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
+      {/* Modals */}
+      <SettingsModal 
+        isOpen={isSettingsOpen} 
+        onClose={() => setIsSettingsOpen(false)} 
+        onOpenMemory={() => setIsMemoryOpen(true)}
+      />
+      <MemoryDashboardModal 
+        isOpen={isMemoryOpen} 
+        onClose={() => setIsMemoryOpen(false)} 
+      />
+      <BrowserAgentModal 
+        isOpen={isBrowserOpen} 
+        onClose={() => setIsBrowserOpen(false)} 
+      />
     </div>
   );
 }

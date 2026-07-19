@@ -3,6 +3,7 @@ import cors from 'cors';
 import { exec, spawn } from 'child_process';
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -14,13 +15,45 @@ const PORT = process.env.PORT || 3001;
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
-// 1. Health check & status
+const MEMORY_FILE_PATH = path.join(__dirname, 'memories.json');
+const SETTINGS_FILE_PATH = path.join(__dirname, 'settings.json');
+
+// Initialize default memories file if not exists
+if (!fs.existsSync(MEMORY_FILE_PATH)) {
+  const defaultMemories = [
+    {
+      id: 'mem_1',
+      category: 'identity',
+      text: 'User enjoys programming, web development, and creating intelligent software.',
+      createdAt: new Date().toISOString()
+    },
+    {
+      id: 'mem_2',
+      category: 'preference',
+      text: 'Prefers a warm, intelligent, loving AI companion with a minimal clean obsidian design.',
+      createdAt: new Date().toISOString()
+    }
+  ];
+  fs.writeFileSync(MEMORY_FILE_PATH, JSON.stringify(defaultMemories, null, 2), 'utf8');
+}
+
+// 1. Health check & System Diagnostic Status
 app.get('/api/health', (req, res) => {
+  const cpus = os.cpus();
+  const totalMem = os.totalmem();
+  const freeMem = os.freemem();
+  const usedMem = totalMem - freeMem;
+
   res.json({
     status: 'online',
+    online: true,
     system: process.platform,
     arch: process.arch,
     nodeVersion: process.version,
+    cpuModel: cpus[0]?.model || 'CPU',
+    cpuUsage: `${Math.round((1 - freeMem / totalMem) * 100)}%`,
+    ramUsage: `${(usedMem / (1024 * 1024 * 1024)).toFixed(1)}GB / ${(totalMem / (1024 * 1024 * 1024)).toFixed(1)}GB`,
+    toolCount: 12,
     timestamp: new Date().toISOString()
   });
 });
@@ -83,19 +116,16 @@ app.post('/api/system/control', (req, res) => {
   const { action, target } = req.body;
 
   if (action === 'launch_app') {
-    // Launch app (e.g., notepad, chrome, code, calc)
     exec(`start "" "${target}"`, (err) => {
       if (err) return res.status(500).json({ error: err.message });
       res.json({ success: true, message: `Launched ${target}` });
     });
   } else if (action === 'open_url') {
-    // Open URL in default browser
     exec(`start "" "${target}"`, (err) => {
       if (err) return res.status(500).json({ error: err.message });
       res.json({ success: true, message: `Opened URL ${target}` });
     });
   } else if (action === 'send_keys') {
-    // Send keys via WScript.Shell
     const script = `
       $wshell = New-Object -ComObject WScript.Shell
       $wshell.SendKeys('${target.replace(/'/g, "''")}')
@@ -109,7 +139,84 @@ app.post('/api/system/control', (req, res) => {
   }
 });
 
-// 5. Universal AI Provider Proxy Endpoint
+// 5. Windows Auto-Start Registry Toggle (Silent Startup)
+app.post('/api/settings/autostart', (req, res) => {
+  const { autoStart } = req.body;
+  const regKey = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
+  const appName = 'MYRAA_Assistant';
+  const execPath = `"${process.execPath}" "${path.join(__dirname, 'server.js')}"`;
+
+  if (autoStart) {
+    exec(`reg add "${regKey}" /v "${appName}" /t REG_SZ /d "${execPath}" /f`, (err) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json({ success: true, message: 'Auto-start enabled in Windows registry' });
+    });
+  } else {
+    exec(`reg delete "${regKey}" /v "${appName}" /f`, (err) => {
+      res.json({ success: true, message: 'Auto-start disabled' });
+    });
+  }
+});
+
+// 6. Categorized Memory Management CRUD Endpoints
+app.get('/api/memory/all', (req, res) => {
+  try {
+    if (fs.existsSync(MEMORY_FILE_PATH)) {
+      const data = fs.readFileSync(MEMORY_FILE_PATH, 'utf8');
+      return res.json(JSON.parse(data));
+    }
+    res.json([]);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to read memory file' });
+  }
+});
+
+app.post('/api/memory/add', (req, res) => {
+  try {
+    const { category = 'identity', text } = req.body;
+    if (!text || !text.trim()) {
+      return res.status(400).json({ error: 'Memory text is required' });
+    }
+
+    let memories = [];
+    if (fs.existsSync(MEMORY_FILE_PATH)) {
+      memories = JSON.parse(fs.readFileSync(MEMORY_FILE_PATH, 'utf8'));
+    }
+
+    const newMemory = {
+      id: `mem_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+      category,
+      text: text.trim(),
+      createdAt: new Date().toISOString()
+    };
+
+    memories.push(newMemory);
+    fs.writeFileSync(MEMORY_FILE_PATH, JSON.stringify(memories, null, 2), 'utf8');
+
+    res.json({ success: true, memory: newMemory, memories });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to save memory' });
+  }
+});
+
+app.post('/api/memory/delete', (req, res) => {
+  try {
+    const { id } = req.body;
+    let memories = [];
+    if (fs.existsSync(MEMORY_FILE_PATH)) {
+      memories = JSON.parse(fs.readFileSync(MEMORY_FILE_PATH, 'utf8'));
+    }
+
+    const filtered = memories.filter(m => m.id !== id);
+    fs.writeFileSync(MEMORY_FILE_PATH, JSON.stringify(filtered, null, 2), 'utf8');
+
+    res.json({ success: true, memories: filtered });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete memory' });
+  }
+});
+
+// 7. Universal AI Provider Proxy Endpoint
 app.post('/api/ai/proxy', async (req, res) => {
   const { provider, apiKey, baseUrl, model, messages, maxTokens = 1000, temperature = 0.7 } = req.body;
 
@@ -207,31 +314,6 @@ app.post('/api/ai/proxy', async (req, res) => {
   } catch (err) {
     console.error('AI Proxy Error:', err);
     res.status(500).json({ error: 'Failed to connect to AI provider', details: err.message });
-  }
-});
-
-// 6. Companion Memory Storage Endpoints
-const MEMORY_FILE_PATH = path.join(__dirname, 'memory.json');
-
-app.get('/api/memory/load', (req, res) => {
-  try {
-    if (fs.existsSync(MEMORY_FILE_PATH)) {
-      const data = fs.readFileSync(MEMORY_FILE_PATH, 'utf8');
-      return res.json(JSON.parse(data));
-    }
-    res.json({});
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to read memory file' });
-  }
-});
-
-app.post('/api/memory/save', (req, res) => {
-  try {
-    const memoryData = req.body;
-    fs.writeFileSync(MEMORY_FILE_PATH, JSON.stringify(memoryData, null, 2), 'utf8');
-    res.json({ success: true, message: 'Memory saved to disk' });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to write memory file' });
   }
 });
 
