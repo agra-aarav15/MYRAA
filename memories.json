@@ -1,0 +1,20 @@
+[
+  {
+    "id": "mem_1",
+    "category": "identity",
+    "text": "Aarav enjoys programming, web development, and creating intelligent software.",
+    "createdAt": "2026-07-19T07:12:32.414Z"
+  },
+  {
+    "id": "mem_2",
+    "category": "preference",
+    "text": "Prefers a warm, intelligent, loving AI companion with a minimal clean obsidian design.",
+    "createdAt": "2026-07-19T07:12:32.417Z"
+  },
+  {
+    "id": "mem_3",
+    "category": "project",
+    "text": "Building MYRAA — a real-time AI girlfriend companion with 3D anime model, voice interaction, and desktop control.",
+    "createdAt": "2026-07-19T07:12:32.417Z"
+  }
+]

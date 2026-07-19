@@ -16,7 +16,7 @@ const DEFAULT_MEMORIES = [
   {
     id: 'mem_1',
     category: 'identity',
-    text: 'User enjoys programming, web development, and creating intelligent software.',
+    text: 'Aarav enjoys programming, web development, and creating intelligent software.',
     createdAt: new Date().toISOString()
   },
   {

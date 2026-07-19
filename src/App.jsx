@@ -1,58 +1,57 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { 
   Sparkles, Eye, Settings as SettingsIcon, Send,
-  Mic, MicOff, Volume2, VolumeX, MessageSquare, X, Radio, Brain, Globe
+  Mic, MicOff, Volume2, VolumeX, MessageSquare, X, Radio, Brain, Globe,
+  Activity, Heart, Smile, Zap, Coffee, CheckCircle, AlertCircle
 } from 'lucide-react';
 
 import AvatarCanvas from './components/AvatarCanvas';
 import SettingsModal from './components/SettingsModal';
 import MemoryDashboardModal from './components/MemoryDashboardModal';
 import BrowserAgentModal from './components/BrowserAgentModal';
-import { sendAiChatMessage, cleanAiResponseText, getAiConfig } from './services/aiProvider';
-import { addCategorizedMemory } from './services/memoryStore';
+import { sendAiChatMessage, cleanAiResponseText, getAiConfig, extractEmotion } from './services/aiProvider';
+import { addCategorizedMemory, getLocalMemories } from './services/memoryStore';
+import { createLiveVoiceEngine } from './services/liveVoiceEngine';
+import { initMoodEngine, updateMood, getMood, getMoodEmoji, getMoodLabel } from './services/moodEngine';
+import { getSessionGreeting, checkIdlePrompt, getTimeContext } from './services/proactiveEngine';
 
 export default function App() {
+  // Modals & Panels
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isMemoryOpen, setIsMemoryOpen] = useState(false);
   const [isBrowserOpen, setIsBrowserOpen] = useState(false);
-  const [isCapturingScreen, setIsCapturingScreen] = useState(false);
-  const [isContinuousScreen, setIsContinuousScreen] = useState(false);
   const [isChatPanelOpen, setIsChatPanelOpen] = useState(false);
 
-  // Voice State
-  const [isListening, setIsListening] = useState(false);
-  const [isAutoSpeak, setIsAutoSpeak] = useState(true);
-  const [isSpeaking, setIsSpeaking] = useState(false);
-  const [voiceList, setVoiceList] = useState([]);
-  const [selectedVoice, setSelectedVoice] = useState('');
-  const [liveSpeechText, setLiveSpeechText] = useState('');
+  // Vision State
+  const [isContinuousVision, setIsContinuousVision] = useState(false);
+  const [visionStream, setVisionStream] = useState(null);
+  const visionIntervalRef = useRef(null);
 
-  // Refs
-  const isSpeakingRef = useRef(false);
-  const isListeningRef = useRef(false);
-  const isProcessingRef = useRef(false);
-  const recognitionRef = useRef(null);
-  const silenceTimerRef = useRef(null);
-  const messagesRef = useRef([]);
-  const chatBottomRef = useRef(null);
+  // Voice Engine State
+  const [liveEngine, setLiveEngine] = useState(null);
+  const [liveStatus, setLiveStatus] = useState('disconnected'); // 'connected' | 'connecting' | 'disconnected' | 'fallback_text_mode'
+  const [isListening, setIsListening] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [isAutoSpeak, setIsAutoSpeak] = useState(true);
+
+  // Companion & Mood State
+  const [mood, setMood] = useState(getMood());
+  const [avatarExpression, setAvatarExpression] = useState('happy');
+  const [lastActivityTime, setLastActivityTime] = useState(Date.now());
+  const [sessionStartTime] = useState(Date.now());
+  const [rateLimitStats, setRateLimitStats] = useState(null);
 
   // Chat State
-  const [messages, setMessages] = useState([
-    {
-      role: 'assistant',
-      content: `Hey there. I'm MYRAA, your real-time companion. I'm right here beside you, listening continuously, remembering our conversations, and watching your screen. What are we working on today? 💕`,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    }
-  ]);
+  const [messages, setMessages] = useState([]);
   const [inputText, setInputText] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
-  const [avatarExpression, setAvatarExpression] = useState('happy');
   const [attachedScreenshot, setAttachedScreenshot] = useState(null);
 
-  // Keep refs in sync
-  useEffect(() => { isSpeakingRef.current = isSpeaking; }, [isSpeaking]);
-  useEffect(() => { isListeningRef.current = isListening; }, [isListening]);
-  useEffect(() => { isProcessingRef.current = isProcessing; }, [isProcessing]);
+  // Refs
+  const messagesRef = useRef([]);
+  const chatBottomRef = useRef(null);
+  const liveEngineRef = useRef(null);
+
   useEffect(() => { messagesRef.current = messages; }, [messages]);
 
   // Auto-scroll chat panel
@@ -62,29 +61,245 @@ export default function App() {
     }
   }, [messages, isChatPanelOpen]);
 
-  // ==============================
-  // Send Message
-  // ==============================
-  const sendMessageRef = useRef(null);
+  // =====================================================================
+  // 1. Initialize Mood & Proactive Greeting
+  // =====================================================================
+  useEffect(() => {
+    initMoodEngine();
+    setMood(getMood());
 
+    // Fetch initial greeting based on time of day & memories
+    const memories = getLocalMemories();
+    const greetingText = getSessionGreeting(memories, Date.now() - 3600000); // assume 1 hour since last
+    const { text, emotion } = extractEmotion(greetingText);
+
+    setMessages([
+      {
+        role: 'assistant',
+        content: text,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      }
+    ]);
+    setAvatarExpression(emotion || 'happy');
+    updateMood('session_start');
+    setMood(getMood());
+  }, []);
+
+  // Proactive Idle Check & Mood Decay timer
+  useEffect(() => {
+    const timer = setInterval(() => {
+      // Mood decay tick
+      updateMood('idle_tick');
+      setMood(getMood());
+
+      // Proactive idle check if user has been quiet for over 10 min
+      const config = getAiConfig();
+      if (config.proactiveEnabled !== false && !isProcessing && !isSpeaking) {
+        const sessionDur = Math.floor((Date.now() - sessionStartTime) / 60000);
+        const idlePrompt = checkIdlePrompt(lastActivityTime, sessionDur);
+        if (idlePrompt) {
+          const { text, emotion } = extractEmotion(idlePrompt);
+          setMessages(prev => [...prev, {
+            role: 'assistant',
+            content: text,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          }]);
+          setAvatarExpression(emotion || 'shy');
+          if (liveEngineRef.current && liveStatus === 'connected') {
+            liveEngineRef.current.sendText(text); // let AI speak or we use fallback
+          } else if (isAutoSpeak) {
+            fallbackSpeakText(text);
+          }
+          setLastActivityTime(Date.now());
+        }
+      }
+    }, 60000); // Check every minute
+
+    return () => clearInterval(timer);
+  }, [lastActivityTime, sessionStartTime, isProcessing, isSpeaking, isAutoSpeak, liveStatus]);
+
+  // =====================================================================
+  // 2. Initialize Gemini Live Voice WebSocket Engine
+  // =====================================================================
+  useEffect(() => {
+    const config = getAiConfig();
+    if (config.voiceMode !== 'live') return;
+
+    const engine = createLiveVoiceEngine({
+      onStatusChange: (status) => {
+        setLiveStatus(status);
+        if (status === 'connected') {
+          updateMood('message_received');
+          setMood(getMood());
+        }
+      },
+      onTranscription: (role, text) => {
+        setLastActivityTime(Date.now());
+        if (role === 'user') {
+          setMessages(prev => [...prev, {
+            role: 'user',
+            content: text,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          }]);
+          setAvatarExpression('listening');
+          updateMood('message_sent', { text });
+          setMood(getMood());
+        } else if (role === 'model') {
+          const { text: cleanText, emotion } = extractEmotion(text);
+          setMessages(prev => {
+            const copy = [...prev];
+            const last = copy[copy.length - 1];
+            if (last && last.role === 'assistant' && last.isStreaming) {
+              last.content += cleanText;
+            } else {
+              copy.push({
+                role: 'assistant',
+                content: cleanText,
+                isStreaming: true,
+                timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+              });
+            }
+            return copy;
+          });
+          if (emotion) setAvatarExpression(emotion);
+          updateMood('message_received', { text: cleanText });
+          setMood(getMood());
+        }
+      },
+      onSpeakingChange: (speaking) => {
+        setIsSpeaking(speaking);
+        if (speaking) setAvatarExpression('speaking');
+        else setAvatarExpression('happy');
+      },
+      onListeningChange: (listening) => {
+        setIsListening(listening);
+        if (listening && !isSpeaking) setAvatarExpression('listening');
+      },
+      onMemorySync: (updatedMemories) => {
+        console.log('[App] Memory sync received from backend:', updatedMemories.length);
+      },
+      onToolResult: (tool, result) => {
+        console.log(`[App] Tool executed: ${tool}`, result);
+      },
+      onRateLimitUpdate: (stats) => {
+        setRateLimitStats(stats);
+      },
+      onTurnComplete: () => {
+        setMessages(prev => prev.map(m => m.isStreaming ? { ...m, isStreaming: false } : m));
+        setAvatarExpression('happy');
+      },
+      onInterrupted: () => {
+        setIsSpeaking(false);
+        setAvatarExpression('listening');
+      },
+      onError: (err) => {
+        console.error('[Live Engine Error]', err);
+      }
+    });
+
+    engine.connect();
+    setLiveEngine(engine);
+    liveEngineRef.current = engine;
+
+    return () => {
+      engine.disconnect();
+    };
+  }, []);
+
+  // =====================================================================
+  // 3. Continuous Screen Vision via WebRTC (`getDisplayMedia`)
+  // =====================================================================
+  const toggleContinuousVision = async () => {
+    if (isContinuousVision) {
+      if (visionIntervalRef.current) clearInterval(visionIntervalRef.current);
+      if (visionStream) {
+        visionStream.getTracks().forEach(track => track.stop());
+      }
+      setVisionStream(null);
+      setIsContinuousVision(false);
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({
+        video: { frameRate: { max: 5 }, width: { max: 1280 } },
+        audio: false
+      });
+
+      setVisionStream(stream);
+      setIsContinuousVision(true);
+
+      stream.getVideoTracks()[0].onended = () => {
+        if (visionIntervalRef.current) clearInterval(visionIntervalRef.current);
+        setIsContinuousVision(false);
+        setVisionStream(null);
+      };
+
+      const videoEl = document.createElement('video');
+      videoEl.srcObject = stream;
+      await videoEl.play();
+
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+
+      const config = getAiConfig();
+      const fps = config.screenVisionFps || 2;
+      const intervalMs = 1000 / fps;
+
+      visionIntervalRef.current = setInterval(() => {
+        if (!videoEl.videoWidth) return;
+        canvas.width = videoEl.videoWidth;
+        canvas.height = videoEl.videoHeight;
+        ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
+
+        const quality = config.screenVisionQuality || 0.6;
+        const base64Jpeg = canvas.toDataURL('image/jpeg', quality);
+
+        if (liveEngineRef.current && liveStatus === 'connected') {
+          liveEngineRef.current.sendScreenFrame(base64Jpeg);
+        }
+      }, intervalMs);
+
+    } catch (err) {
+      console.error('[Screen Vision] Permission denied or error:', err);
+      setIsContinuousVision(false);
+    }
+  };
+
+  // =====================================================================
+  // 4. Send Message (Handles WebSocket Live or HTTP Text mode)
+  // =====================================================================
   const handleSendMessage = useCallback(async (customPrompt = null, screenshot = null) => {
     const textToSend = customPrompt || inputText;
     if (!textToSend.trim() && !screenshot && !attachedScreenshot) return;
-
-    if (isProcessingRef.current) return;
+    if (isProcessing) return;
 
     const screenToUse = screenshot || attachedScreenshot;
+    setLastActivityTime(Date.now());
 
-    // Detect and save user facts automatically
-    const lower = textToSend.toLowerCase();
-    if (lower.includes('my name is') || lower.includes('i like') || lower.includes('i prefer')) {
-      addCategorizedMemory('identity', textToSend);
-    } else if (lower.includes('my goal is') || lower.includes('i want to achieve')) {
-      addCategorizedMemory('goal', textToSend);
-    } else if (lower.includes('working on') || lower.includes('building')) {
-      addCategorizedMemory('project', textToSend);
+    // Update mood for user interaction
+    updateMood('message_sent', { text: textToSend });
+    setMood(getMood());
+
+    // If connected to Gemini Live WebSocket, send via WebSocket
+    if (liveEngineRef.current && liveStatus === 'connected') {
+      if (screenToUse) {
+        liveEngineRef.current.sendScreenFrame(screenToUse);
+      }
+      liveEngineRef.current.sendText(textToSend);
+      setInputText('');
+      setAttachedScreenshot(null);
+      setMessages(prev => [...prev, {
+        role: 'user',
+        content: textToSend,
+        screenshot: screenToUse,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      }]);
+      setAvatarExpression('thinking');
+      return;
     }
 
+    // Otherwise, HTTP proxy fallback
     const userMsgObj = {
       role: 'user',
       content: textToSend,
@@ -101,7 +316,7 @@ export default function App() {
     try {
       const history = messagesRef.current.map(m => ({ role: m.role, content: m.content }));
       const rawAiReply = await sendAiChatMessage(textToSend, history, screenToUse);
-      const sanitizedReply = cleanAiResponseText(rawAiReply);
+      const { text: sanitizedReply, emotion } = extractEmotion(cleanAiResponseText(rawAiReply));
 
       setMessages(prev => [...prev, {
         role: 'assistant',
@@ -109,457 +324,271 @@ export default function App() {
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       }]);
 
-      speakText(sanitizedReply);
-      setAvatarExpression('happy');
+      if (isAutoSpeak) {
+        fallbackSpeakText(sanitizedReply);
+      }
+      setAvatarExpression(emotion || 'happy');
+      updateMood('message_received', { text: sanitizedReply });
+      setMood(getMood());
     } catch (err) {
       setMessages(prev => [...prev, {
         role: 'assistant',
-        content: `Something went wrong: ${err.message}`,
+        content: `My apologies Aarav, I hit a slight snag: ${err.message}`,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       }]);
+      setAvatarExpression('sad');
     } finally {
       setIsProcessing(false);
     }
-  }, [inputText, attachedScreenshot]);
+  }, [inputText, isProcessing, attachedScreenshot, isAutoSpeak, liveStatus]);
 
-  useEffect(() => { sendMessageRef.current = handleSendMessage; }, [handleSendMessage]);
-
-  // ==============================
-  // Speech Recognition (Wake Phrase Activation Check)
-  // ==============================
-  useEffect(() => {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) return;
-
-    const recognition = new SpeechRecognition();
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.lang = 'en-US';
-
-    recognition.onresult = (event) => {
-      if (isSpeakingRef.current || isProcessingRef.current) return;
-
-      let finalTranscript = '';
-      let interimTranscript = '';
-
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const transcript = event.results[i][0].transcript;
-        if (event.results[i].isFinal) {
-          finalTranscript += transcript;
-        } else {
-          interimTranscript += transcript;
-        }
-      }
-
-      const display = finalTranscript || interimTranscript;
-      if (display.trim()) {
-        setLiveSpeechText(display);
-      }
-
-      // Check Wake Word activation if configured
-      const config = getAiConfig();
-      if (config.wakeWordEnabled && config.wakePhrase) {
-        const wakeLower = config.wakePhrase.toLowerCase();
-        if (display.toLowerCase().includes(wakeLower)) {
-          console.log('Wake word activated!');
-        }
-      }
-
-      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-      silenceTimerRef.current = setTimeout(() => {
-        const text = (finalTranscript || interimTranscript).trim();
-        if (text && !isSpeakingRef.current && !isProcessingRef.current) {
-          setLiveSpeechText('');
-          sendMessageRef.current?.(text);
-        }
-      }, 600);
-    };
-
-    recognition.onerror = () => {};
-
-    recognition.onend = () => {
-      if (isListeningRef.current && !isSpeakingRef.current) {
-        setTimeout(() => {
-          try { recognition.start(); } catch (e) {}
-        }, 150);
-      }
-    };
-
-    recognitionRef.current = recognition;
-
-    return () => {
-      try { recognition.stop(); } catch (e) {}
-    };
-  }, []);
-
-  // Sync mic with speaking state
-  useEffect(() => {
-    if (!recognitionRef.current) return;
-
-    if (isSpeaking) {
-      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-      setLiveSpeechText('');
-      try { recognitionRef.current.stop(); } catch (e) {}
-    } else if (isListening && !isSpeaking) {
-      setTimeout(() => {
-        if (isListeningRef.current && !isSpeakingRef.current) {
-          try { recognitionRef.current.start(); } catch (e) {}
-        }
-      }, 400);
-    }
-  }, [isSpeaking, isListening]);
-
-  const toggleListening = () => {
-    if (!recognitionRef.current) {
-      alert('Speech recognition is not supported in this browser.');
-      return;
-    }
-
-    if (isListening) {
-      try { recognitionRef.current.stop(); } catch (e) {}
-      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-      setIsListening(false);
-      setLiveSpeechText('');
-    } else {
-      window.speechSynthesis?.cancel();
-      setIsSpeaking(false);
-      try { recognitionRef.current.start(); } catch (e) {}
-      setIsListening(true);
-    }
-  };
-
-  // ==============================
-  // Voice Selection (Young Female Tone)
-  // ==============================
-  useEffect(() => {
-    const loadVoices = () => {
-      if (typeof window.speechSynthesis === 'undefined') return;
-      const voices = window.speechSynthesis.getVoices();
-      setVoiceList(voices);
-      if (voices.length > 0) {
-        const preferredNames = [
-          'Microsoft Aria Online',
-          'Microsoft Jenny Online', 
-          'Google US English',
-          'Samantha',
-          'Karen',
-          'Zira'
-        ];
-        const match = preferredNames.find(name => 
-          voices.some(v => v.name.includes(name))
-        );
-        const found = match ? voices.find(v => v.name.includes(match)) : null;
-        
-        const fallback = voices.find(v => 
-          v.name.toLowerCase().includes('female') || 
-          v.lang.startsWith('en')
-        ) || voices[0];
-
-        setSelectedVoice(found ? found.name : fallback.name);
-      }
-    };
-
-    loadVoices();
-    if (window.speechSynthesis?.onvoiceschanged !== undefined) {
-      window.speechSynthesis.onvoiceschanged = loadVoices;
-    }
-
-    return () => { window.speechSynthesis?.cancel(); };
-  }, []);
-
-  // Speak AI Response
-  const speakText = useCallback((text) => {
-    if (!isAutoSpeak || !text || typeof window.speechSynthesis === 'undefined') {
-      setIsSpeaking(false);
-      return;
-    }
-
+  // Fallback TTS when offline / non-Live mode
+  const fallbackSpeakText = (text) => {
+    if (!window.speechSynthesis || !text) return;
     window.speechSynthesis.cancel();
-    
-    let cleanText = cleanAiResponseText(text);
-    cleanText = cleanText
-      .replace(/```[\s\S]*?```/g, '. I have written some code for you. ')
-      .replace(/`[^`]+`/g, '')
-      .replace(/[*_#[\](){}]/g, '')
-      .replace(/\s{2,}/g, ' ')
-      .trim();
 
-    if (!cleanText) {
-      setIsSpeaking(false);
-      return;
-    }
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.rate = 0.94;
+    utterance.pitch = 1.1;
 
-    const utterance = new SpeechSynthesisUtterance(cleanText);
-    utterance.pitch = 1.15;
-    utterance.rate = 1.02;
+    const voices = window.speechSynthesis.getVoices();
+    const femaleVoice = voices.find(v => v.name.includes('Zira') || v.name.includes('Samantha') || v.name.includes('Female')) || voices[0];
+    if (femaleVoice) utterance.voice = femaleVoice;
 
-    const voiceObj = voiceList.find(v => v.name === selectedVoice);
-    if (voiceObj) utterance.voice = voiceObj;
-
-    utterance.onstart = () => setIsSpeaking(true);
-    utterance.onend = () => setIsSpeaking(false);
-    utterance.onerror = () => setIsSpeaking(false);
+    utterance.onstart = () => { setIsSpeaking(true); setAvatarExpression('speaking'); };
+    utterance.onend = () => { setIsSpeaking(false); setAvatarExpression('happy'); };
+    utterance.onerror = () => { setIsSpeaking(false); setAvatarExpression('happy'); };
 
     window.speechSynthesis.speak(utterance);
-  }, [isAutoSpeak, voiceList, selectedVoice]);
-
-  // Continuous Screen Capture
-  const captureScreenSnapshot = useCallback(async () => {
-    try {
-      const host = window.location.hostname || 'localhost';
-      const res = await fetch(`http://${host}:3001/api/screen/capture`);
-      const data = await res.json();
-      if (data.success) {
-        return data.data;
-      }
-    } catch (e) {}
-
-    return null;
-  }, []);
-
-  useEffect(() => {
-    let interval = null;
-    if (isContinuousScreen) {
-      interval = setInterval(async () => {
-        if (!isProcessingRef.current && !isSpeakingRef.current) {
-          const snapshot = await captureScreenSnapshot();
-          if (snapshot) {
-            setAttachedScreenshot(snapshot);
-          }
-        }
-      }, 5000);
-    }
-    return () => {
-      if (interval) clearInterval(interval);
-    };
-  }, [isContinuousScreen, captureScreenSnapshot]);
-
-  const handleCaptureScreen = async () => {
-    setIsCapturingScreen(true);
-    const b64 = await captureScreenSnapshot();
-    if (b64) {
-      setAttachedScreenshot(b64);
-      handleSendMessage('Inspect my screen and help me with what you see.', b64);
-    }
-    setIsCapturingScreen(false);
   };
 
-  const latestReply = [...messages].reverse().find(m => m.role === 'assistant');
+  const handleToggleListening = () => {
+    if (liveEngineRef.current) {
+      liveEngineRef.current.toggleMic();
+    }
+  };
 
   return (
-    <div className="relative w-screen h-screen max-h-screen bg-zinc-950 text-zinc-100 overflow-hidden font-sans select-none">
-      {/* 1. 3D Avatar Stage */}
-      <div className="absolute inset-0 z-0">
-        <AvatarCanvas expression={avatarExpression} isSpeaking={isSpeaking} />
-      </div>
-
-      {/* 2. Top Bar */}
-      <header className="absolute top-0 left-0 right-0 z-20 flex items-center justify-between px-5 py-3 bg-gradient-to-b from-zinc-950/90 via-zinc-950/50 to-transparent">
-        <div className="flex items-center gap-2.5">
-          <div className="w-7 h-7 rounded-lg bg-zinc-900/80 border border-zinc-800 flex items-center justify-center">
-            <Sparkles className="w-3.5 h-3.5 text-zinc-400" />
+    <div className="relative w-screen h-screen overflow-hidden bg-zinc-950 text-zinc-100 flex flex-col select-none font-sans">
+      
+      {/* ==============================
+          TOP NAVIGATION BAR
+      ============================== */}
+      <header className="absolute top-0 left-0 right-0 z-30 flex items-center justify-between px-6 py-4 bg-gradient-to-b from-zinc-950 via-zinc-950/80 to-transparent pointer-events-auto">
+        
+        {/* Brand & Companion Mood */}
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-2xl bg-zinc-900/80 border border-zinc-800/80 backdrop-blur-md shadow-lg">
+            <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_10px_rgba(52,211,153,0.8)]" />
+            <span className="text-xs font-bold tracking-widest text-zinc-100 uppercase font-mono">MYRAA // AARAV</span>
           </div>
-          <div>
-            <h1 className="font-semibold text-xs tracking-[0.2em] text-zinc-200 uppercase flex items-center gap-2">
-              MYRAA <span className="text-[9px] px-1.5 py-0.5 rounded bg-zinc-900 border border-zinc-800 text-zinc-400 font-mono">Real-Time</span>
-            </h1>
-            <p className="text-[9px] text-zinc-500 font-mono tracking-wider flex items-center gap-1">
-              <span className={`w-1.5 h-1.5 rounded-full ${
-                isSpeaking ? 'bg-emerald-400 animate-pulse' : 
-                isListening ? 'bg-amber-400 animate-pulse' : 
-                'bg-zinc-600'
-              }`} />
-              {isProcessing ? 'Thinking' : isSpeaking ? 'Speaking' : isListening ? 'Listening' : 'Ready'}
-            </p>
+
+          {/* Dynamic Mood & Affection Pill */}
+          <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-2xl bg-zinc-900/60 border border-zinc-800/60 backdrop-blur-md">
+            <span className="text-sm">{getMoodEmoji()}</span>
+            <span className="text-[11px] font-medium text-zinc-300 capitalize">{getMoodLabel()}</span>
+            <div className="w-px h-3 bg-zinc-800 mx-1" />
+            <Heart className="w-3 h-3 text-rose-400 fill-rose-400" />
+            <span className="text-[11px] font-mono text-rose-300">{Math.round(mood.affection)}%</span>
+          </div>
+
+          {/* Live Voice Connection Status */}
+          <div className={`px-2.5 py-1 rounded-xl text-[10px] font-mono uppercase tracking-wider flex items-center gap-1.5 border backdrop-blur-md ${
+            liveStatus === 'connected' ? 'bg-emerald-950/40 border-emerald-800/60 text-emerald-300' :
+            liveStatus === 'connecting' ? 'bg-amber-950/40 border-amber-800/60 text-amber-300' :
+            'bg-zinc-900/60 border-zinc-800 text-zinc-400'
+          }`}>
+            <Radio className={`w-3 h-3 ${liveStatus === 'connected' ? 'text-emerald-400 animate-pulse' : ''}`} />
+            <span>{liveStatus === 'connected' ? 'Live Voice (Aoede)' : liveStatus === 'connecting' ? 'Connecting...' : 'Text Mode'}</span>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          {/* Continuous Vision Toggle */}
+        {/* Action Buttons */}
+        <div className="flex items-center gap-2.5">
+          {/* Continuous Screen Vision Toggle */}
           <button
-            onClick={() => setIsContinuousScreen(!isContinuousScreen)}
-            className={`px-3 py-1 rounded-lg border text-[10px] font-medium transition flex items-center gap-1.5 ${
-              isContinuousScreen 
-                ? 'bg-emerald-950/80 border-emerald-800 text-emerald-300' 
-                : 'bg-zinc-900/60 border-zinc-800 text-zinc-400 hover:text-zinc-200'
+            onClick={toggleContinuousVision}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-2xl text-xs font-medium border transition-all shadow-lg backdrop-blur-md ${
+              isContinuousVision
+                ? 'bg-emerald-500/20 border-emerald-500 text-emerald-300 shadow-[0_0_15px_rgba(16,185,129,0.3)] animate-pulse'
+                : 'bg-zinc-900/80 border-zinc-800/80 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/80'
             }`}
-            title="Continuous Live Screen Vision Stream"
+            title="Continuous Screen Vision via WebRTC"
           >
-            <Radio className={`w-3 h-3 ${isContinuousScreen ? 'animate-pulse text-emerald-400' : ''}`} />
-            {isContinuousScreen ? 'Live Vision ON' : 'Live Vision OFF'}
+            <Eye className="w-4 h-4" />
+            <span className="hidden md:inline">{isContinuousVision ? 'Live Vision Active' : 'Enable Live Vision'}</span>
           </button>
 
-          {/* Memory Dashboard Button */}
+          {/* Memory Bank */}
           <button
             onClick={() => setIsMemoryOpen(true)}
-            className="px-3 py-1 rounded-lg border border-zinc-800 text-[10px] font-medium transition flex items-center gap-1.5 bg-zinc-900/60 text-zinc-400 hover:text-zinc-200"
+            className="p-2.5 rounded-2xl bg-zinc-900/80 border border-zinc-800/80 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800/80 transition-all shadow-lg backdrop-blur-md"
+            title="Persistent Memory Core"
           >
-            <Brain className="w-3 h-3" />
-            Memory Bank
+            <Brain className="w-4 h-4 text-emerald-400" />
           </button>
 
-          {/* Browser Agent Button */}
-          <button
-            onClick={() => setIsBrowserOpen(true)}
-            className="px-3 py-1 rounded-lg border border-zinc-800 text-[10px] font-medium transition flex items-center gap-1.5 bg-zinc-900/60 text-zinc-400 hover:text-zinc-200"
-          >
-            <Globe className="w-3 h-3" />
-            Browser Agent
-          </button>
-
-          {/* Chat History Panel Toggle */}
+          {/* Chat Panel Toggle */}
           <button
             onClick={() => setIsChatPanelOpen(!isChatPanelOpen)}
-            className="px-3 py-1 rounded-lg border border-zinc-800 text-[10px] font-medium transition flex items-center gap-1.5 bg-zinc-900/60 text-zinc-400 hover:text-zinc-200"
-          >
-            <MessageSquare className="w-3 h-3" />
-            Chat Log
-          </button>
-
-          {/* Voice Mute Toggle */}
-          <button
-            onClick={() => {
-              if (isAutoSpeak) window.speechSynthesis?.cancel();
-              setIsAutoSpeak(!isAutoSpeak);
-            }}
-            className="px-3 py-1 rounded-lg border border-zinc-800 text-[10px] font-medium transition flex items-center gap-1.5 bg-zinc-900/60 text-zinc-400 hover:text-zinc-200"
-          >
-            {isAutoSpeak ? <Volume2 className="w-3 h-3" /> : <VolumeX className="w-3 h-3" />}
-            {isAutoSpeak ? 'Voice' : 'Mute'}
-          </button>
-        </div>
-      </header>
-
-      {/* 3. Sideways Response Card */}
-      {latestReply && !isChatPanelOpen && (
-        <div className="absolute top-16 right-3 md:right-8 z-20 w-72 md:w-80 animate-fade-in" style={{ maxHeight: 'calc(100vh - 140px)' }}>
-          <div className="bg-zinc-950/90 border border-zinc-800/60 p-4 rounded-2xl backdrop-blur-xl shadow-2xl flex flex-col" style={{ maxHeight: 'calc(100vh - 140px)' }}>
-            <div className="flex items-center justify-between pb-1.5 mb-2 border-b border-zinc-800/50 shrink-0">
-              <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-widest">MYRAA</span>
-              {isSpeaking && (
-                <span className="text-[9px] text-emerald-400/80 animate-pulse font-mono">speaking</span>
-              )}
-            </div>
-            <div className="overflow-y-auto flex-1 pr-1" style={{ maxHeight: 'calc(100vh - 220px)' }}>
-              <p className="text-[11px] text-zinc-300 leading-relaxed whitespace-pre-wrap">
-                {latestReply.content}
-              </p>
-            </div>
-            <span className="block text-[8px] text-zinc-600 mt-2 text-right shrink-0">{latestReply.timestamp}</span>
-          </div>
-        </div>
-      )}
-
-      {/* 4. Full Scrollable Chat History Panel */}
-      {isChatPanelOpen && (
-        <div className="absolute top-16 right-3 md:right-8 bottom-20 z-30 w-80 md:w-96 bg-zinc-950/95 border border-zinc-800 p-4 rounded-3xl backdrop-blur-2xl shadow-2xl flex flex-col animate-fade-in">
-          <div className="flex items-center justify-between pb-3 border-b border-zinc-800 shrink-0">
-            <span className="text-xs font-bold text-zinc-200 uppercase tracking-widest flex items-center gap-2">
-              <MessageSquare className="w-3.5 h-3.5" /> Conversation Log
-            </span>
-            <button onClick={() => setIsChatPanelOpen(false)} className="p-1 text-zinc-400 hover:text-white rounded-lg">
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-
-          <div className="flex-1 overflow-y-auto my-3 space-y-3 pr-1">
-            {messages.map((m, index) => (
-              <div key={index} className={`flex flex-col ${m.role === 'user' ? 'items-end' : 'items-start'}`}>
-                <div className={`p-3 rounded-2xl text-xs max-w-[88%] leading-relaxed ${
-                  m.role === 'user' 
-                    ? 'bg-zinc-800 text-zinc-100 rounded-br-none border border-zinc-700/50' 
-                    : 'bg-zinc-900/90 text-zinc-200 rounded-bl-none border border-zinc-800'
-                }`}>
-                  {m.content}
-                </div>
-                <span className="text-[9px] text-zinc-600 mt-1 px-1">{m.timestamp}</span>
-              </div>
-            ))}
-            <div ref={chatBottomRef} />
-          </div>
-        </div>
-      )}
-
-      {/* Live speech feedback */}
-      {liveSpeechText && !isSpeaking && (
-        <div className="absolute top-16 left-3 z-20 bg-zinc-950/90 border border-zinc-800/60 px-3 py-1.5 rounded-xl text-[10px] text-zinc-400 italic shadow-lg backdrop-blur-md max-w-[220px] animate-fade-in">
-          🎙️ "{liveSpeechText}"
-        </div>
-      )}
-
-      {/* 5. Bottom Action Bar */}
-      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 w-full max-w-md px-3">
-        <div className="bg-zinc-950/90 border border-zinc-800/60 p-1.5 rounded-full backdrop-blur-xl shadow-2xl flex items-center gap-1.5">
-          {/* Screen Vision */}
-          <button
-            onClick={handleCaptureScreen}
-            disabled={isCapturingScreen}
-            className={`p-2 rounded-full border transition shrink-0 ${
-              attachedScreenshot 
-                ? 'bg-emerald-950 border-emerald-800 text-emerald-300' 
-                : 'bg-zinc-900/80 border-zinc-800/50 text-zinc-400 hover:text-zinc-200'
+            className={`p-2.5 rounded-2xl border transition-all shadow-lg backdrop-blur-md ${
+              isChatPanelOpen 
+                ? 'bg-zinc-100 border-zinc-100 text-zinc-950 font-semibold' 
+                : 'bg-zinc-900/80 border-zinc-800/80 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800/80'
             }`}
-            title="Inspect Desktop Screen"
+            title="Toggle Dialogue Log"
           >
-            <Eye className={`w-3.5 h-3.5 ${isCapturingScreen ? 'animate-spin' : ''}`} />
+            <MessageSquare className="w-4 h-4" />
           </button>
-
-          {/* Continuous Mic */}
-          <button
-            onClick={toggleListening}
-            className={`p-2 rounded-full border transition shrink-0 ${
-              isListening 
-                ? 'bg-zinc-800 border-zinc-600 text-zinc-100' 
-                : 'bg-zinc-900/80 border-zinc-800/50 text-zinc-500 hover:text-zinc-300'
-            }`}
-            title="Continuous Microphone"
-          >
-            {isListening ? <Mic className="w-3.5 h-3.5" /> : <MicOff className="w-3.5 h-3.5" />}
-          </button>
-
-          {/* Input Field */}
-          <input
-            type="text"
-            value={inputText}
-            onChange={(e) => setInputText(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
-            placeholder={isSpeaking ? "Speaking..." : isListening ? "Listening continuously..." : "Talk to MYRAA..."}
-            className="flex-1 bg-transparent text-[11px] text-zinc-100 placeholder-zinc-600 px-2 focus:outline-none min-w-0"
-          />
 
           {/* Settings */}
           <button
             onClick={() => setIsSettingsOpen(true)}
-            className="p-2 rounded-full bg-zinc-900/80 hover:bg-zinc-800 text-zinc-500 hover:text-zinc-200 border border-zinc-800/50 transition shrink-0"
+            className="p-2.5 rounded-2xl bg-zinc-900/80 border border-zinc-800/80 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800/80 transition-all shadow-lg backdrop-blur-md"
+            title="Configuration"
           >
-            <SettingsIcon className="w-3.5 h-3.5" />
-          </button>
-
-          {/* Send */}
-          <button
-            onClick={() => handleSendMessage()}
-            disabled={isProcessing || (!inputText.trim() && !attachedScreenshot)}
-            className="p-2 rounded-full bg-zinc-200 hover:bg-white text-zinc-900 shadow transition disabled:opacity-30 shrink-0"
-          >
-            <Send className="w-3.5 h-3.5" />
+            <SettingsIcon className="w-4 h-4" />
           </button>
         </div>
-      </div>
+      </header>
 
-      {/* Modals */}
+      {/* ==============================
+          MAIN 3D AVATAR CANVAS
+      ============================== */}
+      <main className="absolute inset-0 z-10">
+        <AvatarCanvas 
+          expression={avatarExpression}
+          isSpeaking={isSpeaking}
+          mood={mood}
+        />
+      </main>
+
+      {/* ==============================
+          BOTTOM CONTROLS & VOICE BAR
+      ============================== */}
+      <footer className="absolute bottom-6 left-0 right-0 z-30 flex flex-col items-center pointer-events-none px-4 gap-4">
+        
+        {/* Floating Voice Indicator Pill */}
+        <div className="flex items-center gap-3 px-5 py-2.5 rounded-3xl bg-zinc-950/85 border border-zinc-800/80 backdrop-blur-xl shadow-2xl pointer-events-auto">
+          {/* Microphone Toggle */}
+          <button
+            onClick={handleToggleListening}
+            className={`p-3 rounded-2xl transition-all flex items-center justify-center ${
+              isListening
+                ? 'bg-rose-500 text-white shadow-[0_0_20px_rgba(244,63,94,0.6)] animate-pulse scale-105'
+                : 'bg-zinc-900 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800'
+            }`}
+          >
+            {isListening ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
+          </button>
+
+          {/* Status Label */}
+          <div className="flex flex-col px-2">
+            <span className="text-xs font-semibold text-zinc-200 tracking-wide">
+              {isSpeaking ? 'MYRAA IS SPEAKING...' : isListening ? 'LISTENING TO AARAV...' : isProcessing ? 'THINKING...' : 'IDLE COMPANION'}
+            </span>
+            <span className="text-[10px] text-zinc-500 font-mono">
+              {liveStatus === 'connected' ? 'GEMINI LIVE WS AUDIO' : 'TEXT & TTS FALLBACK'}
+            </span>
+          </div>
+
+          {/* Audio Output Mute Toggle */}
+          <button
+            onClick={() => {
+              setIsAutoSpeak(!isAutoSpeak);
+              if (isSpeaking && liveEngineRef.current) liveEngineRef.current.stopPlayback();
+            }}
+            className={`p-2.5 rounded-xl transition ${
+              isAutoSpeak ? 'text-emerald-400 bg-emerald-950/30' : 'text-zinc-500 bg-zinc-900'
+            }`}
+          >
+            {isAutoSpeak ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
+          </button>
+        </div>
+
+        {/* Input Bar */}
+        <div className="w-full max-w-xl pointer-events-auto flex items-center gap-2 p-1.5 rounded-3xl bg-zinc-950/90 border border-zinc-800/80 backdrop-blur-2xl shadow-2xl">
+          <input
+            type="text"
+            value={inputText}
+            onChange={e => setInputText(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') handleSendMessage(); }}
+            placeholder="Talk with Myraa..."
+            className="flex-1 bg-transparent px-4 py-2.5 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none"
+          />
+          <button
+            onClick={() => handleSendMessage()}
+            disabled={!inputText.trim() || isProcessing}
+            className={`p-3 rounded-2xl transition-all flex items-center justify-center ${
+              !inputText.trim() || isProcessing
+                ? 'bg-zinc-900 text-zinc-600 cursor-not-allowed'
+                : 'bg-zinc-100 hover:bg-white text-zinc-950 shadow-lg'
+            }`}
+          >
+            <Send className="w-4 h-4" />
+          </button>
+        </div>
+      </footer>
+
+      {/* ==============================
+          SIDE DIALOGUE CHAT LOG
+      ============================== */}
+      {isChatPanelOpen && (
+        <aside className="absolute top-20 right-6 bottom-28 w-80 z-30 flex flex-col bg-zinc-950/90 border border-zinc-800/80 rounded-3xl backdrop-blur-2xl shadow-2xl overflow-hidden animate-fade-in pointer-events-auto">
+          <div className="flex items-center justify-between px-5 py-3.5 border-b border-zinc-800/80 bg-zinc-950/50">
+            <span className="text-xs font-semibold uppercase tracking-widest text-zinc-300 flex items-center gap-2">
+              <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+              Dialogue Transcript
+            </span>
+            <button onClick={() => setIsChatPanelOpen(false)} className="p-1 text-zinc-500 hover:text-zinc-200 rounded-lg">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar text-xs">
+            {messages.map((msg, idx) => (
+              <div
+                key={idx}
+                className={`p-3 rounded-2xl max-w-[90%] space-y-1.5 ${
+                  msg.role === 'user'
+                    ? 'ml-auto bg-zinc-900 border border-zinc-800 text-zinc-100'
+                    : 'mr-auto bg-zinc-900/50 border border-zinc-800/50 text-zinc-300'
+                }`}
+              >
+                <div className="flex items-center justify-between text-[10px] text-zinc-500 font-mono">
+                  <span>{msg.role === 'user' ? 'AARAV' : 'MYRAA'}</span>
+                  <span>{msg.timestamp}</span>
+                </div>
+                {msg.screenshot && (
+                  <img src={msg.screenshot} alt="Visual Frame" className="w-full rounded-xl border border-zinc-800 object-cover max-h-32 my-1" />
+                )}
+                <div className="leading-relaxed whitespace-pre-wrap">{msg.content}</div>
+              </div>
+            ))}
+            <div ref={chatBottomRef} />
+          </div>
+        </aside>
+      )}
+
+      {/* ==============================
+          MODALS
+      ============================== */}
       <SettingsModal 
         isOpen={isSettingsOpen} 
-        onClose={() => setIsSettingsOpen(false)} 
+        onClose={() => setIsSettingsOpen(false)}
         onOpenMemory={() => setIsMemoryOpen(true)}
       />
+
       <MemoryDashboardModal 
         isOpen={isMemoryOpen} 
         onClose={() => setIsMemoryOpen(false)} 
       />
+
       <BrowserAgentModal 
         isOpen={isBrowserOpen} 
         onClose={() => setIsBrowserOpen(false)} 
       />
+
     </div>
   );
 }

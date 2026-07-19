@@ -3,8 +3,9 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
 export default function AvatarCanvas({ 
-  expression = 'happy',
-  isSpeaking = false
+  expression = 'idle',
+  isSpeaking = false,
+  mood = { happiness: 50, energy: 50, affection: 50, focus: 50, curiosity: 50 }
 }) {
   const containerRef = useRef(null);
   const modelRef = useRef(null);
@@ -12,6 +13,7 @@ export default function AvatarCanvas({
   const mouseRef = useRef({ x: 0, y: 0 });
   const isSpeakingRef = useRef(isSpeaking);
   const expressionRef = useRef(expression);
+  const moodRef = useRef(mood);
 
   const [loading, setLoading] = useState(true);
   const [isMobile, setIsMobile] = useState(false);
@@ -19,6 +21,7 @@ export default function AvatarCanvas({
 
   useEffect(() => { isSpeakingRef.current = isSpeaking; }, [isSpeaking]);
   useEffect(() => { expressionRef.current = expression; }, [expression]);
+  useEffect(() => { moodRef.current = mood; }, [mood]);
 
   // Mobile detection
   useEffect(() => {
@@ -96,7 +99,7 @@ export default function AvatarCanvas({
         else if (n.includes('upper chest') || (n.includes('upper') && n.includes('chest'))) bones.upperChest = node;
         else if (n.includes('hips')) bones.hips = node;
 
-        // Arms — match "left arm" / "right arm" (upper arm)
+        // Arms
         if (n.includes('left arm') || (n === 'left arm_51')) bones.leftArm = node;
         if (n.includes('right arm') || (n === 'right arm_70')) bones.rightArm = node;
         if (n.includes('left shoulder')) bones.leftShoulder = node;
@@ -119,7 +122,7 @@ export default function AvatarCanvas({
         }
       });
 
-      // Also try exact name matching for eyes
+      // exact name matching for eyes
       model.traverse((node) => {
         if (!node.isBone) return;
         if (node.name === 'Eye_L_4') bones.eyeL = node;
@@ -129,18 +132,16 @@ export default function AvatarCanvas({
       bonesRef.current = bones;
 
       // === REST POSE: Arms down naturally ===
-      // The model likely has arms in T-pose. Rotate upper arms down along the body.
       if (bones.leftArm) {
-        bones.leftArm.rotation.z = Math.PI / 2.8;   // rotate down
-        bones.leftArm.rotation.x = 0.15;              // slightly forward
+        bones.leftArm.rotation.z = Math.PI / 2.8;
+        bones.leftArm.rotation.x = 0.15;
         bones.leftArm.rotation.y = 0;
       }
       if (bones.rightArm) {
-        bones.rightArm.rotation.z = -Math.PI / 2.8;  // rotate down
+        bones.rightArm.rotation.z = -Math.PI / 2.8;
         bones.rightArm.rotation.x = 0.15;
         bones.rightArm.rotation.y = 0;
       }
-      // Slight natural elbow bend
       if (bones.leftElbow) {
         bones.leftElbow.rotation.x = 0;
         bones.leftElbow.rotation.z = 0.15;
@@ -158,7 +159,6 @@ export default function AvatarCanvas({
         }
       });
 
-      // Material quality
       model.traverse((child) => {
         if (child.isMesh && child.material) {
           child.material.needsUpdate = true;
@@ -172,7 +172,6 @@ export default function AvatarCanvas({
       setLoading(false);
     });
 
-    // Pointer tracking
     const onPointerMove = (e) => {
       if (!containerRef.current) return;
       const cx = e.touches ? e.touches[0].clientX : e.clientX;
@@ -186,13 +185,31 @@ export default function AvatarCanvas({
     window.addEventListener('mousemove', onPointerMove);
     window.addEventListener('touchmove', onPointerMove, { passive: true });
 
-    // === Animation loop ===
     const clock = new THREE.Clock();
     let frameId;
     let speakPhase = 0;
 
-    // Hair physics state
     const hairPhysics = [];
+
+    // State machine targets
+    const poseState = {
+      head: { x: 0, y: 0, z: 0 },
+      chest: { x: 0, y: 0, z: 0 },
+      hips: { x: 0, y: 0, z: 0 },
+      leftShoulder: { x: 0, y: 0, z: 0 },
+      rightShoulder: { x: 0, y: 0, z: 0 },
+      leftArm: { x: 0, y: 0, z: 0 },
+      rightArm: { x: 0, y: 0, z: 0 },
+      eyeL: { x: 0, y: 0, z: 0 },
+      eyeR: { x: 0, y: 0, z: 0 },
+    };
+
+    let nextBlinkTime = 0;
+    let isBlinking = false;
+    let blinkPhase = 0;
+
+    let nextIdleShiftTime = 0;
+    let idleSubPose = { x: 0, y: 0, z: 0 };
 
     const animate = () => {
       frameId = requestAnimationFrame(animate);
@@ -207,77 +224,208 @@ export default function AvatarCanvas({
 
       const lerp = (curr, target, speed) => curr + (target - curr) * Math.min(speed * dt * 60, 1);
 
-      // --- 1. BREATHING: spine & chest gentle expand ---
-      const breathCycle = Math.sin(t * 1.6) * 0.008;
+      const expr = expressionRef.current;
+      const mood = moodRef.current || { happiness: 50, energy: 50, affection: 50 };
+      
+      const moodEnergy = (mood.energy !== undefined ? mood.energy : 50) / 100;
+      const moodHappiness = (mood.happiness !== undefined ? mood.happiness : 50) / 100;
+
+      // Base speeds influenced by mood
+      const breathSpeed = 1.6 * (0.6 + moodEnergy * 0.8) * (expr === 'sad' || expr === 'thinking' ? 0.7 : 1);
+      const breathAmp = 0.008 * (0.8 + moodEnergy * 0.4) * (expr === 'sad' ? 0.8 : 1);
+      const swaySpeed = 0.4 * (0.8 + moodEnergy * 0.5) * (expr === 'excited' ? 1.5 : 1);
+
+      // --- Blink Cycle ---
+      if (t > nextBlinkTime) {
+        isBlinking = true;
+        blinkPhase = 0;
+        nextBlinkTime = t + 2 + Math.random() * 4; // 2-6s interval
+      }
+      let blinkValue = 0;
+      if (isBlinking) {
+        blinkPhase += dt * 18; // blink speed
+        if (blinkPhase >= Math.PI) {
+          isBlinking = false;
+        } else {
+          blinkValue = Math.sin(blinkPhase) * 0.3; // eye rotation x for blink
+        }
+      }
+
+      // --- Idle Variation ---
+      if (t > nextIdleShiftTime) {
+        idleSubPose = {
+          x: (Math.random() - 0.5) * 0.04,
+          y: (Math.random() - 0.5) * 0.04,
+          z: (Math.random() - 0.5) * 0.04
+        };
+        nextIdleShiftTime = t + 8 + Math.random() * 7; // 8-15s
+      }
+
+      // --- Expression Targets ---
+      let tHead = { x: idleSubPose.x, y: idleSubPose.y, z: idleSubPose.z };
+      let tChest = { x: 0, y: 0, z: 0 };
+      let tShoulderL = { x: 0, y: 0, z: 0 };
+      let tShoulderR = { x: 0, y: 0, z: 0 };
+      let tArmL = { x: 0, y: 0, z: 0 };
+      let tArmR = { x: 0, y: 0, z: 0 };
+      let tEye = { x: 0, y: 0, z: 0 };
+      let trackFactor = 1.0;
+      
+      // Mood baseline modifiers
+      if (moodHappiness > 0.6) {
+        tHead.x -= 0.02; // slightly looking up/bright
+      }
+
+      switch(expr) {
+        case 'happy':
+          tHead.z += 0.05;
+          tChest.x -= 0.03; // slight lift
+          tArmL.z -= 0.1; 
+          tArmR.z += 0.1;
+          break;
+        case 'thinking':
+          tHead.z -= 0.08;
+          tHead.x -= 0.05;
+          tEye.x -= 0.1;
+          tEye.y += 0.15;
+          trackFactor = 0.3;
+          break;
+        case 'excited':
+          tChest.x -= 0.05;
+          tArmL.z -= 0.15;
+          tArmR.z += 0.15;
+          break;
+        case 'sad':
+          tShoulderL.z -= 0.1;
+          tShoulderR.z += 0.1;
+          tHead.x += 0.1;
+          tChest.x += 0.05;
+          trackFactor = 0.2;
+          break;
+        case 'angry':
+          tShoulderL.z += 0.05;
+          tShoulderR.z -= 0.05;
+          tHead.x += 0.08;
+          tEye.x -= 0.05;
+          trackFactor = 1.2;
+          break;
+        case 'shy':
+          tHead.y += 0.25;
+          tHead.x += 0.08;
+          tShoulderL.z += 0.05;
+          tShoulderR.z -= 0.05;
+          trackFactor = 0.1;
+          break;
+        case 'listening':
+          tHead.z += 0.04;
+          tHead.x -= 0.02;
+          trackFactor = 1.1;
+          break;
+        case 'speaking':
+          // handled dynamically
+          break;
+        case 'idle':
+        default:
+          break;
+      }
+
+      // LERP state targets (0.5s transition -> speed ~0.03 per frame at 60fps)
+      const blendSpeed = 0.04;
+      poseState.head.x = lerp(poseState.head.x, tHead.x, blendSpeed);
+      poseState.head.y = lerp(poseState.head.y, tHead.y, blendSpeed);
+      poseState.head.z = lerp(poseState.head.z, tHead.z, blendSpeed);
+      poseState.chest.x = lerp(poseState.chest.x, tChest.x, blendSpeed);
+      poseState.leftShoulder.z = lerp(poseState.leftShoulder.z, tShoulderL.z, blendSpeed);
+      poseState.rightShoulder.z = lerp(poseState.rightShoulder.z, tShoulderR.z, blendSpeed);
+      poseState.leftArm.z = lerp(poseState.leftArm.z, tArmL.z, blendSpeed);
+      poseState.rightArm.z = lerp(poseState.rightArm.z, tArmR.z, blendSpeed);
+      poseState.eyeL.x = lerp(poseState.eyeL.x, tEye.x, blendSpeed);
+      poseState.eyeL.y = lerp(poseState.eyeL.y, tEye.y, blendSpeed);
+
+      // --- 1. BREATHING ---
+      const breathCycle = Math.sin(t * breathSpeed) * breathAmp;
       if (bones.spine) {
         bones.spine.rotation.x = lerp(bones.spine.rotation.x, (bones.spine.userData.restRotation?.x || 0) + breathCycle, 0.05);
       }
       if (bones.chest) {
-        bones.chest.rotation.x = lerp(bones.chest.rotation.x, (bones.chest.userData.restRotation?.x || 0) + breathCycle * 0.6, 0.05);
+        bones.chest.rotation.x = lerp(bones.chest.rotation.x, (bones.chest.userData.restRotation?.x || 0) + breathCycle * 0.6 + poseState.chest.x, 0.05);
       }
 
-      // --- 2. HEAD TRACKING: follow mouse/touch ---
-      const targetHeadY = mouseRef.current.x * 0.3;   // left/right
-      const targetHeadX = -mouseRef.current.y * 0.15;  // up/down
+      // --- 2. HEAD TRACKING & EXPRESSION ---
+      const targetHeadY = mouseRef.current.x * 0.3 * trackFactor + poseState.head.y;
+      const targetHeadX = -mouseRef.current.y * 0.15 * trackFactor + poseState.head.x;
       if (bones.head) {
         bones.head.rotation.y = lerp(bones.head.rotation.y, targetHeadY, 0.04);
         bones.head.rotation.x = lerp(bones.head.rotation.x, (bones.head.userData.restRotation?.x || 0) + targetHeadX, 0.04);
+        bones.head.rotation.z = lerp(bones.head.rotation.z, (bones.head.userData.restRotation?.z || 0) + poseState.head.z, 0.04);
       }
-      // Neck follows head partially
       if (bones.neck) {
         bones.neck.rotation.y = lerp(bones.neck.rotation.y, targetHeadY * 0.3, 0.03);
       }
 
-      // --- 3. EYE TRACKING ---
+      // --- 3. EYE TRACKING & BLINK ---
+      const targetEyeY = mouseRef.current.x * 0.15 * trackFactor + poseState.eyeL.y;
+      const targetEyeX = -mouseRef.current.y * 0.1 * trackFactor + poseState.eyeL.x + blinkValue;
       if (bones.eyeL) {
-        bones.eyeL.rotation.y = lerp(bones.eyeL.rotation.y, mouseRef.current.x * 0.15, 0.08);
-        bones.eyeL.rotation.x = lerp(bones.eyeL.rotation.x, -mouseRef.current.y * 0.1, 0.08);
+        bones.eyeL.rotation.y = lerp(bones.eyeL.rotation.y, targetEyeY, 0.08);
+        bones.eyeL.rotation.x = lerp(bones.eyeL.rotation.x, targetEyeX, 0.12);
       }
       if (bones.eyeR) {
-        bones.eyeR.rotation.y = lerp(bones.eyeR.rotation.y, mouseRef.current.x * 0.15, 0.08);
-        bones.eyeR.rotation.x = lerp(bones.eyeR.rotation.x, -mouseRef.current.y * 0.1, 0.08);
+        bones.eyeR.rotation.y = lerp(bones.eyeR.rotation.y, targetEyeY, 0.08);
+        bones.eyeR.rotation.x = lerp(bones.eyeR.rotation.x, targetEyeX, 0.12);
       }
 
-      // --- 4. SPEAKING ANIMATION: nod + subtle body sway ---
-      if (isSpeakingRef.current) {
-        speakPhase += dt * 5.5;
-        const nod = Math.sin(speakPhase) * 0.02;
+      // --- 4. SHOULDERS & ARMS ---
+      if (bones.leftShoulder) {
+        bones.leftShoulder.rotation.z = lerp(bones.leftShoulder.rotation.z, (bones.leftShoulder.userData.restRotation?.z || 0) + poseState.leftShoulder.z, 0.05);
+      }
+      if (bones.rightShoulder) {
+        bones.rightShoulder.rotation.z = lerp(bones.rightShoulder.rotation.z, (bones.rightShoulder.userData.restRotation?.z || 0) + poseState.rightShoulder.z, 0.05);
+      }
+      if (bones.leftArm) {
+        bones.leftArm.rotation.z = lerp(bones.leftArm.rotation.z, (bones.leftArm.userData.restRotation?.z || 0) + poseState.leftArm.z, 0.05);
+      }
+      if (bones.rightArm) {
+        bones.rightArm.rotation.z = lerp(bones.rightArm.rotation.z, (bones.rightArm.userData.restRotation?.z || 0) + poseState.rightArm.z, 0.05);
+      }
+
+      // --- 5. SPEAKING ANIMATION ---
+      if (isSpeakingRef.current || expr === 'speaking') {
+        speakPhase += dt * (5.5 + moodEnergy * 2);
+        const nod = Math.sin(speakPhase) * 0.02 * (expr === 'speaking' || expr === 'excited' ? 1.5 : 1);
         const sway = Math.sin(speakPhase * 0.6) * 0.012;
         if (bones.head) {
           bones.head.rotation.x += nod;
-          bones.head.rotation.z = lerp(bones.head.rotation.z || 0, sway, 0.06);
+          bones.head.rotation.z = lerp(bones.head.rotation.z || 0, sway + poseState.head.z, 0.06);
         }
         if (bones.upperChest) {
           bones.upperChest.rotation.x = lerp(bones.upperChest.rotation.x || 0, (bones.upperChest.userData.restRotation?.x || 0) + nod * 0.4, 0.05);
         }
       } else {
         speakPhase *= 0.92;
-        if (bones.head) {
-          bones.head.rotation.z = lerp(bones.head.rotation.z || 0, 0, 0.04);
-        }
       }
 
-      // --- 5. IDLE MICRO-SWAY: never look frozen ---
-      const idleY = Math.sin(t * 0.4) * 0.006;
+      // --- 6. IDLE MICRO-SWAY ---
+      const excitedSway = expr === 'excited' ? Math.sin(t * swaySpeed * 2) * 0.02 : 0;
+      const idleY = Math.sin(t * swaySpeed) * 0.006 + excitedSway;
       if (bones.hips) {
         bones.hips.rotation.y = lerp(bones.hips.rotation.y || 0, idleY, 0.03);
       }
 
-      // --- 6. HAIR PHYSICS: secondary motion ---
+      // --- 7. HAIR PHYSICS ---
       if (bones.hairBones && bones.hairBones.length > 0) {
         bones.hairBones.forEach((hb, i) => {
-          // Initialize physics state
           if (!hairPhysics[i]) hairPhysics[i] = { vel: 0, angle: 0 };
           const hp = hairPhysics[i];
 
-          // Hair swings based on head movement + gravity + wind
           const headInfluence = (bones.head ? bones.head.rotation.y : 0) * 0.3;
-          const windNoise = Math.sin(t * 1.2 + i * 0.7) * 0.015;
+          const exciteMotion = expr === 'excited' ? Math.sin(t * 3 + i) * 0.02 : 0;
+          const windNoise = Math.sin(t * 1.2 + i * 0.7) * 0.015 + exciteMotion;
           const target = headInfluence + windNoise;
           
           const springForce = (target - hp.angle) * 12;
           hp.vel += springForce * dt;
-          hp.vel *= 0.85; // damping
+          hp.vel *= 0.85; 
           hp.angle += hp.vel * dt;
           
           hb.rotation.z = (hb.userData.restRotation?.z || 0) + hp.angle;
@@ -285,10 +433,11 @@ export default function AvatarCanvas({
         });
       }
 
-      // --- 7. SKIRT PHYSICS ---
+      // --- 8. SKIRT PHYSICS ---
       if (bones.skirtBones && bones.skirtBones.length > 0) {
         bones.skirtBones.forEach((sb, i) => {
-          const swing = Math.sin(t * 1.0 + i * 1.5) * 0.01;
+          const exciteSwing = expr === 'excited' ? Math.sin(t * 2.5 + i) * 0.02 : 0;
+          const swing = Math.sin(t * 1.0 + i * 1.5) * 0.01 + exciteSwing;
           sb.rotation.z = (sb.userData.restRotation?.z || 0) + swing;
         });
       }
@@ -298,7 +447,6 @@ export default function AvatarCanvas({
 
     animate();
 
-    // Resize
     const onResize = () => {
       if (!containerRef.current) return;
       const nw = containerRef.current.clientWidth;
@@ -355,3 +503,4 @@ export default function AvatarCanvas({
     </div>
   );
 }
+
