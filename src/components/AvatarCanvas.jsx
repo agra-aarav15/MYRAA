@@ -89,26 +89,26 @@ export default function AvatarCanvas({
       const bones = {};
       model.traverse((node) => {
         if (!node.isBone) return;
-        const n = node.name.toLowerCase();
+        const n = node.name.toLowerCase().replace(/_/g, ' ');
 
         if (n.includes('head') && !n.includes('hair')) bones.head = node;
         else if (n.includes('neck')) bones.neck = node;
-        else if (n.includes('eye_l') || n.includes('eye_l')) { if (n.includes('_l')) bones.eyeL = node; }
-        else if (n.includes('eye_r') || n.includes('eye_r')) { if (n.includes('_r')) bones.eyeR = node; }
+        else if (n.includes('eye l') || n.includes('eye_l')) { if (n.includes(' l')) bones.eyeL = node; }
+        else if (n.includes('eye r') || n.includes('eye_r')) { if (n.includes(' r')) bones.eyeR = node; }
         else if (n.includes('spine') && !bones.spine) bones.spine = node;
         else if (n.includes('chest') && !n.includes('upper') && !bones.chest) bones.chest = node;
         else if (n.includes('upper chest') || (n.includes('upper') && n.includes('chest'))) bones.upperChest = node;
         else if (n.includes('hips')) bones.hips = node;
 
-        // Arms
-        if (n.includes('left arm') || (n === 'left arm_51')) bones.leftArm = node;
-        if (n.includes('right arm') || (n === 'right arm_70')) bones.rightArm = node;
-        if (n.includes('left shoulder')) bones.leftShoulder = node;
-        if (n.includes('right shoulder')) bones.rightShoulder = node;
-        if (n.includes('left elbow')) bones.leftElbow = node;
-        if (n.includes('right elbow')) bones.rightElbow = node;
-        if (n.includes('left wrist')) bones.leftWrist = node;
-        if (n.includes('right wrist')) bones.rightWrist = node;
+        // Arms (normalize underscores and spaces)
+        if (n.includes('left arm') || n.includes('left_arm')) bones.leftArm = node;
+        if (n.includes('right arm') || n.includes('right_arm')) bones.rightArm = node;
+        if (n.includes('left shoulder') || n.includes('left_shoulder')) bones.leftShoulder = node;
+        if (n.includes('right shoulder') || n.includes('right_shoulder')) bones.rightShoulder = node;
+        if (n.includes('left elbow') || n.includes('left_elbow')) bones.leftElbow = node;
+        if (n.includes('right elbow') || n.includes('right_elbow')) bones.rightElbow = node;
+        if (n.includes('left wrist') || n.includes('left_wrist')) bones.leftWrist = node;
+        if (n.includes('right wrist') || n.includes('right_wrist')) bones.rightWrist = node;
 
         // Hair chains for physics
         if (n.includes('hair')) {
@@ -132,24 +132,22 @@ export default function AvatarCanvas({
 
       bonesRef.current = bones;
 
-      // === REST POSE: Arms down naturally along torso ===
+      // === REST POSE: Lower arms naturally out of T-pose along torso ===
       if (bones.leftArm) {
-        bones.leftArm.rotation.z = -Math.PI / 2.6;
-        bones.leftArm.rotation.x = 0.15;
-        bones.leftArm.rotation.y = 0;
+        bones.leftArm.rotation.set(0, 0, 0);
+        bones.leftArm.rotation.x = -1.25; // Drop left arm cleanly down to hip level
+        bones.leftArm.rotation.z = -0.15;
       }
       if (bones.rightArm) {
-        bones.rightArm.rotation.z = Math.PI / 2.6;
-        bones.rightArm.rotation.x = 0.15;
-        bones.rightArm.rotation.y = 0;
+        bones.rightArm.rotation.set(0, 0, 0);
+        bones.rightArm.rotation.x = -1.25; // Drop right arm cleanly down to hip level
+        bones.rightArm.rotation.z = 0.15;
       }
       if (bones.leftElbow) {
-        bones.leftElbow.rotation.x = 0;
-        bones.leftElbow.rotation.z = -0.15;
+        bones.leftElbow.rotation.x = -0.2;
       }
       if (bones.rightElbow) {
-        bones.rightElbow.rotation.x = 0;
-        bones.rightElbow.rotation.z = 0.15;
+        bones.rightElbow.rotation.x = -0.2;
       }
 
       // Store initial rotations for animation blending
@@ -384,10 +382,12 @@ export default function AvatarCanvas({
         bones.rightShoulder.rotation.z = lerp(bones.rightShoulder.rotation.z, (bones.rightShoulder.userData.restRotation?.z || 0) + poseState.rightShoulder.z, 0.05);
       }
       if (bones.leftArm) {
-        bones.leftArm.rotation.z = lerp(bones.leftArm.rotation.z, (bones.leftArm.userData.restRotation?.z || 0) + poseState.leftArm.z, 0.05);
+        bones.leftArm.rotation.x = lerp(bones.leftArm.rotation.x, (bones.leftArm.userData.restRotation?.x || -1.25) + poseState.leftArm.z * 0.3, 0.05);
+        bones.leftArm.rotation.z = lerp(bones.leftArm.rotation.z, (bones.leftArm.userData.restRotation?.z || -0.15) + poseState.leftArm.z, 0.05);
       }
       if (bones.rightArm) {
-        bones.rightArm.rotation.z = lerp(bones.rightArm.rotation.z, (bones.rightArm.userData.restRotation?.z || 0) + poseState.rightArm.z, 0.05);
+        bones.rightArm.rotation.x = lerp(bones.rightArm.rotation.x, (bones.rightArm.userData.restRotation?.x || -1.25) - poseState.rightArm.z * 0.3, 0.05);
+        bones.rightArm.rotation.z = lerp(bones.rightArm.rotation.z, (bones.rightArm.userData.restRotation?.z || 0.15) + poseState.rightArm.z, 0.05);
       }
 
       // --- 5. SPEAKING ANIMATION ---

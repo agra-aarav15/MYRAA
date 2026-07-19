@@ -154,13 +154,49 @@ export default function BrowserAgentModal({ isOpen, onClose, initialUrl = 'https
         </div>
 
         {/* Browser Content Frame */}
-        <div className="flex-1 bg-white relative">
-          <iframe
-            src={activeTab.url}
-            title="Browser Agent Frame"
-            className="w-full h-full border-none"
-            sandbox="allow-same-origin allow-scripts allow-popups allow-forms"
-          />
+        <div className="flex-1 bg-zinc-950 relative flex flex-col">
+          {activeTab.url && (
+            activeTab.url.includes('google.com') ||
+            activeTab.url.includes('youtube.com') ||
+            activeTab.url.includes('github.com') ||
+            activeTab.url.includes('x.com') ||
+            activeTab.url.includes('twitter.com') ||
+            activeTab.url.includes('instagram.com') ||
+            activeTab.url.includes('openai.com')
+          ) ? (
+            <div className="flex-1 flex flex-col items-center justify-center p-8 text-center bg-gradient-to-b from-zinc-950 to-zinc-900 border-t border-zinc-800 animate-fade-in">
+              <div className="w-16 h-16 rounded-3xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center mb-6 shadow-2xl animate-pulse">
+                <Globe className="w-8 h-8 text-emerald-400" />
+              </div>
+              <h3 className="text-lg font-bold text-zinc-100 mb-2">Security & Frame Protection Notice</h3>
+              <p className="text-xs text-zinc-400 max-w-md mb-6 leading-relaxed">
+                Major sites like <span className="text-zinc-200 font-semibold">{activeTab.title || activeTab.url}</span> prevent inside-browser embedding via X-Frame-Options to protect your session.
+              </p>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => {
+                    fetch('/api/tools/execute', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ toolName: 'openWebsite', args: { url: activeTab.url } })
+                    });
+                    window.open(activeTab.url, '_blank');
+                  }}
+                  className="px-6 py-3 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold text-xs shadow-[0_0_25px_rgba(16,185,129,0.4)] flex items-center gap-2 transition transform hover:scale-105"
+                >
+                  <Play className="w-4 h-4 fill-zinc-950" />
+                  <span>Launch in Desktop Window Instantly</span>
+                </button>
+              </div>
+            </div>
+          ) : (
+            <iframe
+              src={activeTab.url}
+              title="Browser Agent Frame"
+              className="w-full h-full border-none bg-white"
+              sandbox="allow-same-origin allow-scripts allow-popups allow-forms"
+            />
+          )}
         </div>
       </div>
     </div>

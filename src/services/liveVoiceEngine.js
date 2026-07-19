@@ -125,7 +125,7 @@ export function createLiveVoiceEngine(callbacks = {}) {
       // Create a ScriptProcessor to capture raw audio
       // (AudioWorklet would be better but requires serving a separate file)
       const source = ctx.createMediaStreamSource(micStream);
-      const processor = ctx.createScriptProcessor(4096, 1, 1);
+      const processor = ctx.createScriptProcessor(2048, 1, 1);
 
       processor.onaudioprocess = (e) => {
         if (!isConnected || !ws || ws.readyState !== WebSocket.OPEN) return;

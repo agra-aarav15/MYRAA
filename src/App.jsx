@@ -14,6 +14,7 @@ import { addCategorizedMemory, getLocalMemories } from './services/memoryStore';
 import { createLiveVoiceEngine } from './services/liveVoiceEngine';
 import { initMoodEngine, updateMood, getMood, getMoodEmoji, getMoodLabel } from './services/moodEngine';
 import { getSessionGreeting, checkIdlePrompt, getTimeContext } from './services/proactiveEngine';
+import { executeDirectCommand } from './services/desktopCommandEngine';
 
 export default function App() {
   // Modals & Panels
@@ -139,6 +140,7 @@ export default function App() {
       onTranscription: (role, text) => {
         setLastActivityTime(Date.now());
         if (role === 'user') {
+          executeDirectCommand(text);
           setMessages(prev => [...prev, {
             role: 'user',
             content: text,
@@ -149,6 +151,7 @@ export default function App() {
           setMood(getMood());
         } else if (role === 'model') {
           const { text: cleanText, emotion } = extractEmotion(text);
+          executeDirectCommand(cleanText);
           setMessages(prev => {
             const copy = [...prev];
             const last = copy[copy.length - 1];
@@ -278,6 +281,9 @@ export default function App() {
     if (!textToSend.trim() && !screenshot && !attachedScreenshot) return;
     if (isProcessing) return;
 
+    // Check and execute desktop/web command immediately ("open youtube", etc.)
+    executeDirectCommand(textToSend);
+
     const screenToUse = screenshot || attachedScreenshot || (isContinuousVision ? latestCapturedFrameRef.current : null);
     setLastActivityTime(Date.now());
 
@@ -322,6 +328,8 @@ export default function App() {
       const rawAiReply = await sendAiChatMessage(textToSend, history, screenToUse);
       const { text: sanitizedReply, emotion } = extractEmotion(cleanAiResponseText(rawAiReply));
 
+      executeDirectCommand(sanitizedReply);
+
       setMessages(prev => [...prev, {
         role: 'assistant',
         content: sanitizedReply,
@@ -353,17 +361,15 @@ export default function App() {
 
     const speakWithAvailableVoices = () => {
       const utterance = new SpeechSynthesisUtterance(text);
-      utterance.rate = 0.94;
+      utterance.rate = 0.96;
       utterance.pitch = 1.25; // Higher pitch for sweet female resonance
 
       const voices = window.speechSynthesis.getVoices();
-      // Exclude male names explicitly
       const femaleCandidates = voices.filter(v => {
         const name = v.name.toLowerCase();
         return !name.includes('david') && !name.includes('mark') && !name.includes('george') && !name.includes('richard') && !name.includes('guy') && !name.includes('male');
       });
 
-      // Prefer explicit female voice names
       const femaleVoice = femaleCandidates.find(v => 
         v.name.includes('Zira') || v.name.includes('Hazel') || v.name.includes('Susan') || 
         v.name.includes('Samantha') || v.name.includes('Victoria') || v.name.includes('Female') || 
@@ -376,7 +382,11 @@ export default function App() {
       utterance.onend = () => { setIsSpeaking(false); setAvatarExpression('happy'); };
       utterance.onerror = () => { setIsSpeaking(false); setAvatarExpression('happy'); };
 
+      // Chrome Windows bug workaround: resume after small delay if paused/stalled
       window.speechSynthesis.speak(utterance);
+      if (window.speechSynthesis.paused) {
+        window.speechSynthesis.resume();
+      }
     };
 
     const currentVoices = window.speechSynthesis.getVoices();
@@ -413,6 +423,7 @@ export default function App() {
       rec.continuous = false;
       rec.interimResults = true;
       rec.lang = 'en-US';
+      let finalTranscript = '';
       rec.onstart = () => {
         setIsListening(true);
       };
@@ -420,12 +431,20 @@ export default function App() {
         let transcript = '';
         for (let i = event.resultIndex; i < event.results.length; ++i) {
           transcript += event.results[i][0].transcript;
+          if (event.results[i].isFinal) {
+            finalTranscript = event.results[i][0].transcript;
+          }
         }
         setInputText(transcript);
       };
       rec.onend = () => {
         setIsListening(false);
         speechRecognitionRef.current = null;
+        const textToProcess = finalTranscript || inputText;
+        if (textToProcess && textToProcess.trim()) {
+          executeDirectCommand(textToProcess);
+          handleSendMessage(textToProcess);
+        }
       };
       rec.onerror = (err) => {
         console.warn("Speech recognition error:", err);
@@ -435,7 +454,7 @@ export default function App() {
       rec.start();
       speechRecognitionRef.current = rec;
     } catch (err) {
-      console.error("Failed to start speech recognition fallback:", err);
+      console.error("Speech recognition start failed:", err);
       setIsListening(false);
     }
   };
