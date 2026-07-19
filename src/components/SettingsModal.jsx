@@ -54,6 +54,7 @@ export default function SettingsModal({ isOpen, onClose, onOpenMemory }) {
     { id: 'gemini', name: 'Google Gemini', desc: 'Gemini 2.0 Flash / Live Voice', icon: '✦' },
     { id: 'groq', name: 'Groq Cloud', desc: 'Ultra-fast inference', icon: '⚡' },
     { id: 'grok', name: 'xAI Grok', desc: 'High intelligence', icon: '◆' },
+    { id: 'openrouter', name: 'OpenRouter (Free & Vision)', desc: 'Models with image/video inputs', icon: '◎' },
     { id: 'openai', name: 'OpenAI', desc: 'GPT-4o multimodal', icon: '○' },
     { id: 'custom', name: 'Custom Endpoint', desc: 'Ollama / LM Studio', icon: '⬡' },
     { id: 'simulation', name: 'Offline Mode', desc: 'No API needed', icon: '◇' },
@@ -244,6 +245,32 @@ export default function SettingsModal({ isOpen, onClose, onOpenMemory }) {
                 </div>
               )}
 
+              {config.activeProvider === 'openrouter' && (
+                <div className="p-4 rounded-2xl bg-zinc-900/60 border border-zinc-800 space-y-3 animate-fade-in">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-zinc-200">OpenRouter Configuration (Free Image/Video Models)</span>
+                    <a href="https://openrouter.ai/keys" target="_blank" rel="noreferrer" className="text-[11px] text-emerald-400 hover:underline flex items-center gap-1">
+                      Get Keys <ExternalLink className="w-3 h-3" />
+                    </a>
+                  </div>
+                  <InputField
+                    label="OpenRouter API Key"
+                    type="password"
+                    mono
+                    value={config.openrouterKey || ''}
+                    onChange={e => setConfig({ ...config, openrouterKey: e.target.value })}
+                    placeholder="sk-or-v1-..."
+                  />
+                  <InputField
+                    label="Model Name (Vision & Image Input capable)"
+                    mono
+                    value={config.openrouterModel || 'google/gemini-2.0-flash-lite-001'}
+                    onChange={e => setConfig({ ...config, openrouterModel: e.target.value })}
+                  />
+                  <span className="text-[10px] text-zinc-400 block">Try: google/gemini-2.0-flash-lite-001 or meta-llama/llama-3.2-90b-vision-instruct:free</span>
+                </div>
+              )}
+
               {config.activeProvider === 'openai' && (
                 <div className="p-4 rounded-2xl bg-zinc-900/60 border border-zinc-800 space-y-3 animate-fade-in">
                   <div className="flex items-center justify-between">
@@ -335,9 +362,7 @@ export default function SettingsModal({ isOpen, onClose, onOpenMemory }) {
                         className="w-full mt-1 bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-zinc-100 focus:outline-none"
                       >
                         <option value="Aoede">Aoede — Sweet, gentle, young female tone (Recommended)</option>
-                        <option value="Puck">Puck — Upbeat, warm, energetic tone</option>
-                        <option value="Charon">Charon — Calm, deep, articulate tone</option>
-                        <option value="Kore">Kore — Soft, soothing, caring tone</option>
+                        <option value="Kore">Kore — Soft, soothing, caring female tone</option>
                       </select>
                     </div>
                     <div className="p-3 rounded-xl bg-emerald-950/20 border border-emerald-900/40 text-[11px] text-emerald-300 flex items-start gap-2">

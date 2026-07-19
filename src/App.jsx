@@ -33,6 +33,7 @@ export default function App() {
   const [isListening, setIsListening] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isAutoSpeak, setIsAutoSpeak] = useState(true);
+  const [isHeaderCollapsed, setIsHeaderCollapsed] = useState(false);
 
   // Companion & Mood State
   const [mood, setMood] = useState(getMood());
@@ -51,6 +52,7 @@ export default function App() {
   const messagesRef = useRef([]);
   const chatBottomRef = useRef(null);
   const liveEngineRef = useRef(null);
+  const latestCapturedFrameRef = useRef(null);
 
   useEffect(() => { messagesRef.current = messages; }, [messages]);
 
@@ -254,6 +256,7 @@ export default function App() {
 
         const quality = config.screenVisionQuality || 0.6;
         const base64Jpeg = canvas.toDataURL('image/jpeg', quality);
+        latestCapturedFrameRef.current = base64Jpeg;
 
         if (liveEngineRef.current && liveStatus === 'connected') {
           liveEngineRef.current.sendScreenFrame(base64Jpeg);
@@ -274,7 +277,7 @@ export default function App() {
     if (!textToSend.trim() && !screenshot && !attachedScreenshot) return;
     if (isProcessing) return;
 
-    const screenToUse = screenshot || attachedScreenshot;
+    const screenToUse = screenshot || attachedScreenshot || (isContinuousVision ? latestCapturedFrameRef.current : null);
     setLastActivityTime(Date.now());
 
     // Update mood for user interaction
@@ -342,25 +345,49 @@ export default function App() {
     }
   }, [inputText, isProcessing, attachedScreenshot, isAutoSpeak, liveStatus]);
 
-  // Fallback TTS when offline / non-Live mode
-  const fallbackSpeakText = (text) => {
+  // Fallback TTS when offline / non-Live mode (Strictly Female voice)
+  const fallbackSpeakText = useCallback((text) => {
     if (!window.speechSynthesis || !text) return;
     window.speechSynthesis.cancel();
 
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.rate = 0.94;
-    utterance.pitch = 1.1;
+    const speakWithAvailableVoices = () => {
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.rate = 0.94;
+      utterance.pitch = 1.25; // Higher pitch for sweet female resonance
 
-    const voices = window.speechSynthesis.getVoices();
-    const femaleVoice = voices.find(v => v.name.includes('Zira') || v.name.includes('Samantha') || v.name.includes('Female')) || voices[0];
-    if (femaleVoice) utterance.voice = femaleVoice;
+      const voices = window.speechSynthesis.getVoices();
+      // Exclude male names explicitly
+      const femaleCandidates = voices.filter(v => {
+        const name = v.name.toLowerCase();
+        return !name.includes('david') && !name.includes('mark') && !name.includes('george') && !name.includes('richard') && !name.includes('guy') && !name.includes('male');
+      });
 
-    utterance.onstart = () => { setIsSpeaking(true); setAvatarExpression('speaking'); };
-    utterance.onend = () => { setIsSpeaking(false); setAvatarExpression('happy'); };
-    utterance.onerror = () => { setIsSpeaking(false); setAvatarExpression('happy'); };
+      // Prefer explicit female voice names
+      const femaleVoice = femaleCandidates.find(v => 
+        v.name.includes('Zira') || v.name.includes('Hazel') || v.name.includes('Susan') || 
+        v.name.includes('Samantha') || v.name.includes('Victoria') || v.name.includes('Female') || 
+        v.name.includes('Google US English') || v.name.includes('Woman')
+      ) || femaleCandidates[0] || voices[0];
 
-    window.speechSynthesis.speak(utterance);
-  };
+      if (femaleVoice) utterance.voice = femaleVoice;
+
+      utterance.onstart = () => { setIsSpeaking(true); setAvatarExpression('speaking'); };
+      utterance.onend = () => { setIsSpeaking(false); setAvatarExpression('happy'); };
+      utterance.onerror = () => { setIsSpeaking(false); setAvatarExpression('happy'); };
+
+      window.speechSynthesis.speak(utterance);
+    };
+
+    const currentVoices = window.speechSynthesis.getVoices();
+    if (currentVoices.length === 0) {
+      window.speechSynthesis.onvoiceschanged = () => {
+        window.speechSynthesis.onvoiceschanged = null;
+        speakWithAvailableVoices();
+      };
+    } else {
+      speakWithAvailableVoices();
+    }
+  }, []);
 
   const handleToggleListening = () => {
     if (liveEngineRef.current) {
@@ -372,8 +399,25 @@ export default function App() {
     <div className="relative w-screen h-screen overflow-hidden bg-zinc-950 text-zinc-100 flex flex-col select-none font-sans">
       
       {/* ==============================
-          TOP NAVIGATION BAR
+          TOP NAVIGATION BAR (COLLAPSIBLE)
       ============================== */}
+      {isHeaderCollapsed ? (
+        <header className="absolute top-3 left-6 z-30 flex items-center gap-2 pointer-events-auto">
+          <button
+            onClick={() => setIsHeaderCollapsed(false)}
+            className="px-3 py-1.5 rounded-2xl bg-zinc-900/90 border border-zinc-800/90 backdrop-blur-md shadow-xl text-[11px] font-mono text-emerald-300 hover:bg-zinc-800 transition flex items-center gap-2"
+          >
+            <Sparkles className="w-3 h-3 text-emerald-400" />
+            <span>MYRAA // SHOW BAR</span>
+          </button>
+          {isContinuousVision && (
+            <div className="px-2.5 py-1 rounded-xl bg-emerald-950/80 border border-emerald-500/60 text-emerald-300 text-[10px] font-mono animate-pulse flex items-center gap-1.5">
+              <Eye className="w-3 h-3 text-emerald-400" />
+              <span>LIVE VISION ACTIVE</span>
+            </div>
+          )}
+        </header>
+      ) : (
       <header className="absolute top-0 left-0 right-0 z-30 flex items-center justify-between px-6 py-4 bg-gradient-to-b from-zinc-950 via-zinc-950/80 to-transparent pointer-events-auto">
         
         {/* Brand & Companion Mood */}
@@ -428,17 +472,13 @@ export default function App() {
             <Brain className="w-4 h-4 text-emerald-400" />
           </button>
 
-          {/* Chat Panel Toggle */}
+          {/* Browser Agent */}
           <button
-            onClick={() => setIsChatPanelOpen(!isChatPanelOpen)}
-            className={`p-2.5 rounded-2xl border transition-all shadow-lg backdrop-blur-md ${
-              isChatPanelOpen 
-                ? 'bg-zinc-100 border-zinc-100 text-zinc-950 font-semibold' 
-                : 'bg-zinc-900/80 border-zinc-800/80 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800/80'
-            }`}
-            title="Toggle Dialogue Log"
+            onClick={() => setIsBrowserOpen(true)}
+            className="p-2.5 rounded-2xl bg-zinc-900/80 border border-zinc-800/80 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800/80 transition-all shadow-lg backdrop-blur-md"
+            title="Web Browser Agent"
           >
-            <MessageSquare className="w-4 h-4" />
+            <Globe className="w-4 h-4 text-cyan-400" />
           </button>
 
           {/* Settings */}
@@ -449,8 +489,34 @@ export default function App() {
           >
             <SettingsIcon className="w-4 h-4" />
           </button>
+
+          {/* Chat Panel Toggle Button */}
+          <button
+            onClick={() => setIsChatPanelOpen(!isChatPanelOpen)}
+            className={`p-2.5 rounded-2xl border transition-all shadow-lg backdrop-blur-md relative ${
+              isChatPanelOpen 
+                ? 'bg-zinc-100 border-zinc-100 text-zinc-950' 
+                : 'bg-zinc-900/80 border-zinc-800/80 text-zinc-300 hover:text-zinc-100'
+            }`}
+            title="Toggle Dialogue Panel"
+          >
+            <MessageSquare className="w-4 h-4" />
+            {messages.length > 0 && !isChatPanelOpen && (
+              <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            )}
+          </button>
+
+          {/* Collapse Top Header Button */}
+          <button
+            onClick={() => setIsHeaderCollapsed(true)}
+            className="p-2 rounded-2xl bg-zinc-900/60 border border-zinc-800/80 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition"
+            title="Hide Top Content Bar for clean view"
+          >
+            <X className="w-4 h-4" />
+          </button>
         </div>
       </header>
+      )}
 
       {/* ==============================
           MAIN 3D AVATAR CANVAS

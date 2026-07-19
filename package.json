@@ -3,15 +3,37 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "main": "electron/main.js",
+  "build": {
+    "appId": "com.aarav.myraa.desktop",
+    "productName": "MYRAA Companion",
+    "directories": {
+      "output": "dist_electron"
+    },
+    "win": {
+      "target": ["nsis"],
+      "icon": "public/favicon.svg"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true
+    }
+  },
   "scripts": {
     "start": "concurrently \"node server.js\" \"vite --host 0.0.0.0\"",
     "dev": "vite --host 0.0.0.0",
     "server": "node server.js",
     "build": "vite build",
+    "electron:dev": "concurrently \"node server.js\" \"vite\" \"electron electron/main.js --dev\"",
+    "build:electron": "vite build && electron-builder",
+    "build:android": "vite build && npx cap sync android && npx cap open android",
     "lint": "oxlint",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@capacitor/android": "^8.4.2",
+    "@capacitor/core": "^8.4.2",
     "@google/genai": "^2.12.0",
     "@pixiv/three-vrm": "^3.5.5",
     "concurrently": "^10.0.3",
@@ -25,10 +47,13 @@
     "ws": "^8.21.1"
   },
   "devDependencies": {
+    "@capacitor/cli": "^8.4.2",
     "@tailwindcss/vite": "^4.3.3",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.3",
+    "electron": "^43.1.1",
+    "electron-builder": "^26.15.3",
     "oxlint": "^1.71.0",
     "tailwindcss": "^4.3.3",
     "vite": "^8.1.1"

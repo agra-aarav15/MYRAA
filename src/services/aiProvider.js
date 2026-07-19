@@ -13,6 +13,8 @@ const DEFAULT_CONFIG = {
   geminiModel: 'gemini-2.0-flash',
   grokKey: '',
   grokModel: 'grok-beta',
+  openrouterKey: '',
+  openrouterModel: 'google/gemini-2.0-flash-lite-001',
   openaiKey: '',
   openaiModel: 'gpt-4o',
   customUrl: 'http://localhost:11434/v1',
@@ -242,6 +244,7 @@ export async function sendAiChatMessage(userMessage, conversationHistory = [], s
   if (provider === 'groq') { apiKey = config.groqKey; model = config.groqModel; }
   else if (provider === 'gemini') { apiKey = config.geminiKey; model = config.geminiModel; }
   else if (provider === 'grok') { apiKey = config.grokKey; model = config.grokModel; }
+  else if (provider === 'openrouter') { apiKey = config.openrouterKey; model = config.openrouterModel; }
   else if (provider === 'openai') { apiKey = config.openaiKey; model = config.openaiModel; }
   else if (provider === 'custom') { apiKey = config.customKey; baseUrl = config.customUrl; model = config.customModel; }
 

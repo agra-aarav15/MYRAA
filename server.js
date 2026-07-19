@@ -30,7 +30,7 @@ const SESSION_FILE_PATH = path.join(__dirname, 'session_state.json');
 const RATE_LIMITS = {
   maxRequestsPerMinute: 14,    // Leave 1 RPM headroom
   maxRequestsPerDay: 1400,     // Leave 100 RPD headroom
-  memoryConsolidationCooldownMs: 60000, // Min 1 min between memory extractions
+  memoryConsolidationCooldownMs: 20000, // Min 20s between memory extractions
 };
 
 const rateLimitState = {
@@ -443,6 +443,32 @@ app.get('/api/rate-limit', (req, res) => {
   res.json(getRateLimitStatus());
 });
 
+// Manual / Proxy memory consolidation
+app.post('/api/memory/consolidate', async (req, res) => {
+  const { apiKey, dialogueHistory } = req.body;
+  if (!apiKey || !dialogueHistory || !Array.isArray(dialogueHistory)) {
+    return res.status(400).json({ error: 'Missing apiKey or dialogueHistory' });
+  }
+  try {
+    const updated = await processConversationForMemories(apiKey, dialogueHistory);
+    res.json({ success: true, updated: updated || loadMemories() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Direct HTTP Tool Execution endpoint
+app.post('/api/tools/execute', async (req, res) => {
+  const { toolName, args } = req.body;
+  if (!toolName) return res.status(400).json({ error: 'toolName required' });
+  try {
+    const result = await executeDesktopTool(toolName, args || {});
+    res.json({ success: true, result });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // =====================================================================
 // 7. Universal AI Provider Proxy (HTTP fallback for non-Live mode)
 // =====================================================================
@@ -473,11 +499,17 @@ app.post('/api/ai/proxy', async (req, res) => {
       endpointUrl = 'https://api.openai.com/v1/chat/completions';
       headers['Authorization'] = `Bearer ${apiKey}`;
       bodyPayload = { model: model || 'gpt-4o', messages, temperature, max_tokens: maxTokens };
+    } else if (provider === 'openrouter') {
+      endpointUrl = 'https://openrouter.ai/api/v1/chat/completions';
+      headers['Authorization'] = `Bearer ${apiKey}`;
+      headers['HTTP-Referer'] = 'http://localhost:5173';
+      headers['X-Title'] = 'MYRAA Assistant';
+      bodyPayload = { model: model || 'google/gemini-2.0-flash-lite-001', messages, temperature, max_tokens: maxTokens };
     } else if (provider === 'gemini') {
       const geminiModel = model || 'gemini-2.0-flash';
       endpointUrl = `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${apiKey}`;
 
-      const contents = messages.map(m => ({
+      const rawContents = messages.map(m => ({
         role: m.role === 'assistant' ? 'model' : (m.role === 'system' ? 'user' : m.role),
         parts: Array.isArray(m.content)
           ? m.content.map(c => {
@@ -486,10 +518,20 @@ app.post('/api/ai/proxy', async (req, res) => {
                 const mimeType = c.image_url.url.split(';')[0].replace('data:', '');
                 return { inline_data: { mime_type: mimeType, data: base64Str } };
               }
-              return { text: c.text || c };
+              return { text: c.text || JSON.stringify(c) };
             })
           : [{ text: typeof m.content === 'string' ? m.content : JSON.stringify(m.content) }]
       }));
+
+      // Merge consecutive turns with the same role so Gemini doesn't error on consecutive 'user' turns
+      const contents = [];
+      for (const item of rawContents) {
+        if (contents.length > 0 && contents[contents.length - 1].role === item.role) {
+          contents[contents.length - 1].parts.push(...item.parts);
+        } else {
+          contents.push(item);
+        }
+      }
 
       trackRequest();
       const geminiRes = await fetch(endpointUrl, {
@@ -543,12 +585,14 @@ function executeDesktopTool(toolName, args) {
     switch (toolName) {
       case 'openApplication':
         const appMap = {
-          notepad: 'notepad', chrome: 'chrome', vscode: 'code', calculator: 'calc',
-          explorer: 'explorer', cmd: 'cmd', powershell: 'powershell', paint: 'mspaint',
-          taskmanager: 'taskmgr', settings: 'ms-settings:'
+          notepad: 'notepad.exe', chrome: 'chrome.exe', vscode: 'code', calculator: 'calc.exe',
+          explorer: 'explorer.exe', cmd: 'cmd.exe', powershell: 'powershell.exe', paint: 'mspaint.exe',
+          taskmanager: 'taskmgr.exe', settings: 'ms-settings:'
         };
-        const appCmd = appMap[(args.name || '').toLowerCase()] || args.name;
-        cmd = `start "" "${appCmd}"`;
+        const rawName = (args.name || '').toLowerCase().trim();
+        const appCmd = appMap[rawName] || args.name;
+        // Use PowerShell Start-Process to search apps or path reliably
+        cmd = `powershell -NoProfile -Command "try { Start-Process '${appCmd}' -ErrorAction Stop } catch { try { Start-Process 'shell:AppsFolder\\${args.name}' -ErrorAction Stop } catch { start '${args.name}' } }"`;
         break;
 
       case 'closeApplication':
@@ -753,6 +797,17 @@ wss.on('connection', async (clientWs) => {
     const ai = new GoogleGenAI({ apiKey });
     clientWs.send(JSON.stringify({ type: 'status', status: 'connecting_gemini' }));
 
+    // Read configured voice preset (enforce Aoede female default)
+    let configuredVoice = 'Aoede';
+    try {
+      if (fs.existsSync(SETTINGS_FILE_PATH)) {
+        const settings = JSON.parse(fs.readFileSync(SETTINGS_FILE_PATH, 'utf8'));
+        if (settings.voicePreset && ['Aoede', 'Kore'].includes(settings.voicePreset)) {
+          configuredVoice = settings.voicePreset;
+        }
+      }
+    } catch (e) {}
+
     // Load memories and session state
     const memories = loadMemories();
     const sessionState = loadSessionState();
@@ -761,6 +816,7 @@ wss.on('connection', async (clientWs) => {
     // Track conversation for memory consolidation
     let dialogueHistory = [];
     let currentModelText = '';
+    clientWs.latestScreenFrame = null;
 
     trackRequest();
 
@@ -769,7 +825,7 @@ wss.on('connection', async (clientWs) => {
       config: {
         responseModalities: [Modality.AUDIO],
         speechConfig: {
-          voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Aoede' } },
+          voiceConfig: { prebuiltVoiceConfig: { voiceName: configuredVoice } },
         },
         systemInstruction: systemPrompt,
         tools: [{ functionDeclarations: TOOL_DECLARATIONS }],
@@ -905,17 +961,28 @@ wss.on('connection', async (clientWs) => {
             media: { data: msg.audio, mimeType: 'audio/pcm;rate=16000' }
           });
         } else if (msg.type === 'text') {
-          // Text input fallback
+          // Text input fallback (if vision frame available, inject it directly!)
+          const parts = [{ text: msg.text }];
+          if (clientWs.latestScreenFrame) {
+            parts.unshift({ inlineData: { mimeType: 'image/jpeg', data: clientWs.latestScreenFrame } });
+          }
           session.sendClientContent({
-            turns: [{ role: 'user', parts: [{ text: msg.text }] }],
+            turns: [{ role: 'user', parts }],
             turnComplete: true
           });
           dialogueHistory.push({ role: 'user', text: msg.text });
         } else if (msg.type === 'screen_frame') {
-          // Screen vision frame
-          session.sendRealtimeInput({
-            media: { data: msg.frame, mimeType: 'image/jpeg' }
-          });
+          // Store latest screen frame and send across all union fields so GenAI Live engine sees it instantly
+          clientWs.latestScreenFrame = msg.frame;
+          try {
+            session.sendRealtimeInput({
+              mediaChunks: [{ data: msg.frame, mimeType: 'image/jpeg' }],
+              media: { data: msg.frame, mimeType: 'image/jpeg' },
+              video: { data: msg.frame, mimeType: 'image/jpeg' }
+            });
+          } catch (e) {
+            console.error('[Vision] Send frame error:', e.message);
+          }
         } else if (msg.type === 'api_key') {
           // Client sending API key (from settings save)
           try {

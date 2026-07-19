@@ -1,0 +1,23 @@
+{
+  "appId": "com.aarav.myraa",
+  "appName": "MYRAA Companion",
+  "webDir": "dist",
+  "bundledWebRuntime": false,
+  "server": {
+    "androidScheme": "http",
+    "cleartext": true
+  },
+  "android": {
+    "allowMixedContent": true,
+    "captureInput": true,
+    "webkitScreenCapture": true
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 1500,
+      "backgroundColor": "#09090b",
+      "showSpinner": true,
+      "spinnerColor": "#34d399"
+    }
+  }
+}
