@@ -65,16 +65,22 @@ export function cleanAiResponseText(rawText) {
   return t;
 }
 
-const SYSTEM_PROMPT = `You are MYRAA, a calm, intelligent, and warm AI companion.
-Your goal is to assist your partner with programming, inspect their screen, and talk with natural, warm conversation.
-Do NOT include internal thinking tags like <think> or "Thought:" in your output. Provide direct, helpful, and natural human responses.`;
+import { formatMemoryForPrompt } from './memoryStore';
+
+const BASE_SYSTEM_PROMPT = `You are MYRAA, a calm, intelligent, loving, and attentive AI girlfriend & coding companion.
+You talk like a real human girl — warm, natural, direct, and affectionate.
+You remember personal details about your partner and help them with coding, computer automation, and screen inspection in real time.
+Do NOT include internal thinking tags like <think> or "Thought:" in your output. Provide direct, helpful, loving, and natural human responses.`;
 
 export async function sendAiChatMessage(userMessage, conversationHistory = [], screenshotData = null) {
   const config = getAiConfig();
   const provider = config.activeProvider;
 
+  const memoryContext = formatMemoryForPrompt();
+  const fullSystemPrompt = `${BASE_SYSTEM_PROMPT}\n\n${memoryContext}`;
+
   const messages = [
-    { role: 'system', content: SYSTEM_PROMPT },
+    { role: 'system', content: fullSystemPrompt },
     ...conversationHistory,
   ];
 

@@ -210,6 +210,31 @@ app.post('/api/ai/proxy', async (req, res) => {
   }
 });
 
+// 6. Companion Memory Storage Endpoints
+const MEMORY_FILE_PATH = path.join(__dirname, 'memory.json');
+
+app.get('/api/memory/load', (req, res) => {
+  try {
+    if (fs.existsSync(MEMORY_FILE_PATH)) {
+      const data = fs.readFileSync(MEMORY_FILE_PATH, 'utf8');
+      return res.json(JSON.parse(data));
+    }
+    res.json({});
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to read memory file' });
+  }
+});
+
+app.post('/api/memory/save', (req, res) => {
+  try {
+    const memoryData = req.body;
+    fs.writeFileSync(MEMORY_FILE_PATH, JSON.stringify(memoryData, null, 2), 'utf8');
+    res.json({ success: true, message: 'Memory saved to disk' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to write memory file' });
+  }
+});
+
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`MYRAA Desktop Control & Vision Backend running on http://0.0.0.0:${PORT}`);
 });
