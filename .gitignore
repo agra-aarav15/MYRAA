@@ -12,6 +12,9 @@ node_modules/
 # Production build output
 dist/
 dist-ssr/
+dist_electron/
+android/.gradle/
+android/app/build/
 *.local
 
 # Editor directories

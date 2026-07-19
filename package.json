@@ -5,7 +5,8 @@
   "type": "module",
   "main": "electron/main.js",
   "build": {
-    "appId": "com.aarav.myraa.desktop",
+    "appId": "com.myraa.app",
+    "electronDist": "E:/_build_cache/electron-dist",
     "productName": "MYRAA Companion",
     "directories": {
       "output": "dist_electron"
