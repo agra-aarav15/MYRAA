@@ -53,6 +53,7 @@ export default function App() {
   const chatBottomRef = useRef(null);
   const liveEngineRef = useRef(null);
   const latestCapturedFrameRef = useRef(null);
+  const speechRecognitionRef = useRef(null);
 
   useEffect(() => { messagesRef.current = messages; }, [messages]);
 
@@ -390,8 +391,52 @@ export default function App() {
   }, []);
 
   const handleToggleListening = () => {
-    if (liveEngineRef.current) {
+    if (liveStatus === 'connected' && liveEngineRef.current) {
       liveEngineRef.current.toggleMic();
+      return;
+    }
+
+    // Web Speech Recognition Fallback for Text Mode ("mic input is none so fix it")
+    const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRec) {
+      alert("Speech Recognition is not supported in this browser. Please use Chrome/Edge or connect to Live mode!");
+      return;
+    }
+    if (isListening && speechRecognitionRef.current) {
+      try { speechRecognitionRef.current.stop(); } catch(e) {}
+      speechRecognitionRef.current = null;
+      setIsListening(false);
+      return;
+    }
+    try {
+      const rec = new SpeechRec();
+      rec.continuous = false;
+      rec.interimResults = true;
+      rec.lang = 'en-US';
+      rec.onstart = () => {
+        setIsListening(true);
+      };
+      rec.onresult = (event) => {
+        let transcript = '';
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          transcript += event.results[i][0].transcript;
+        }
+        setInputText(transcript);
+      };
+      rec.onend = () => {
+        setIsListening(false);
+        speechRecognitionRef.current = null;
+      };
+      rec.onerror = (err) => {
+        console.warn("Speech recognition error:", err);
+        setIsListening(false);
+        speechRecognitionRef.current = null;
+      };
+      rec.start();
+      speechRecognitionRef.current = rec;
+    } catch (err) {
+      console.error("Failed to start speech recognition fallback:", err);
+      setIsListening(false);
     }
   };
 
@@ -425,15 +470,6 @@ export default function App() {
           <div className="flex items-center gap-2 px-3 py-1.5 rounded-2xl bg-zinc-900/80 border border-zinc-800/80 backdrop-blur-md shadow-lg">
             <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_10px_rgba(52,211,153,0.8)]" />
             <span className="text-xs font-bold tracking-widest text-zinc-100 uppercase font-mono">MYRAA // AARAV</span>
-          </div>
-
-          {/* Dynamic Mood & Affection Pill */}
-          <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-2xl bg-zinc-900/60 border border-zinc-800/60 backdrop-blur-md">
-            <span className="text-sm">{getMoodEmoji()}</span>
-            <span className="text-[11px] font-medium text-zinc-300 capitalize">{getMoodLabel()}</span>
-            <div className="w-px h-3 bg-zinc-800 mx-1" />
-            <Heart className="w-3 h-3 text-rose-400 fill-rose-400" />
-            <span className="text-[11px] font-mono text-rose-300">{Math.round(mood.affection)}%</span>
           </div>
 
           {/* Live Voice Connection Status */}
@@ -648,6 +684,9 @@ export default function App() {
       <MemoryDashboardModal 
         isOpen={isMemoryOpen} 
         onClose={() => setIsMemoryOpen(false)} 
+        mood={mood}
+        getMoodLabel={getMoodLabel}
+        getMoodEmoji={getMoodEmoji}
       />
 
       <BrowserAgentModal 

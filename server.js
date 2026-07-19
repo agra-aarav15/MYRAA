@@ -490,15 +490,13 @@ app.post('/api/ai/proxy', async (req, res) => {
     if (provider === 'groq') {
       endpointUrl = 'https://api.groq.com/openai/v1/chat/completions';
       headers['Authorization'] = `Bearer ${apiKey}`;
-      bodyPayload = { model: model || 'llama-3.3-70b-versatile', messages, temperature, max_tokens: maxTokens };
-    } else if (provider === 'grok') {
-      endpointUrl = 'https://api.x.ai/v1/chat/completions';
+      bodyPayload = { model: model || 'llama-3.2-90b-vision-preview', messages, temperature, max_tokens: maxTokens };
+    } else if (provider === 'opencode-mimo') {
+      endpointUrl = baseUrl || 'https://openrouter.ai/api/v1/chat/completions';
       headers['Authorization'] = `Bearer ${apiKey}`;
-      bodyPayload = { model: model || 'grok-beta', messages, temperature, max_tokens: maxTokens };
-    } else if (provider === 'openai') {
-      endpointUrl = 'https://api.openai.com/v1/chat/completions';
-      headers['Authorization'] = `Bearer ${apiKey}`;
-      bodyPayload = { model: model || 'gpt-4o', messages, temperature, max_tokens: maxTokens };
+      headers['HTTP-Referer'] = 'http://localhost:5173';
+      headers['X-Title'] = 'MYRAA Assistant';
+      bodyPayload = { model: model || 'opencode/mimo-vision-instruct:free', messages, temperature, max_tokens: maxTokens };
     } else if (provider === 'openrouter') {
       endpointUrl = 'https://openrouter.ai/api/v1/chat/completions';
       headers['Authorization'] = `Bearer ${apiKey}`;

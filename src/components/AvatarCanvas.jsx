@@ -83,6 +83,7 @@ export default function AvatarCanvas({
       model.position.x = -center.x * scale;
       model.position.y = -box.min.y * scale;
       model.position.z = -center.z * scale;
+      model.rotation.y = Math.PI; // Make the model face forward directly toward Aarav!
 
       // Collect bone references by name pattern
       const bones = {};
@@ -131,24 +132,24 @@ export default function AvatarCanvas({
 
       bonesRef.current = bones;
 
-      // === REST POSE: Arms down naturally ===
+      // === REST POSE: Arms down naturally along torso ===
       if (bones.leftArm) {
-        bones.leftArm.rotation.z = Math.PI / 2.8;
+        bones.leftArm.rotation.z = -Math.PI / 2.6;
         bones.leftArm.rotation.x = 0.15;
         bones.leftArm.rotation.y = 0;
       }
       if (bones.rightArm) {
-        bones.rightArm.rotation.z = -Math.PI / 2.8;
+        bones.rightArm.rotation.z = Math.PI / 2.6;
         bones.rightArm.rotation.x = 0.15;
         bones.rightArm.rotation.y = 0;
       }
       if (bones.leftElbow) {
         bones.leftElbow.rotation.x = 0;
-        bones.leftElbow.rotation.z = 0.15;
+        bones.leftElbow.rotation.z = -0.15;
       }
       if (bones.rightElbow) {
         bones.rightElbow.rotation.x = 0;
-        bones.rightElbow.rotation.z = -0.15;
+        bones.rightElbow.rotation.z = 0.15;
       }
 
       // Store initial rotations for animation blending

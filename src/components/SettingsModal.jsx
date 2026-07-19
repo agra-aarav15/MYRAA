@@ -51,12 +51,11 @@ export default function SettingsModal({ isOpen, onClose, onOpenMemory }) {
   };
 
   const providers = [
-    { id: 'gemini', name: 'Google Gemini', desc: 'Gemini 2.0 Flash / Live Voice', icon: '✦' },
-    { id: 'groq', name: 'Groq Cloud', desc: 'Ultra-fast inference', icon: '⚡' },
-    { id: 'grok', name: 'xAI Grok', desc: 'High intelligence', icon: '◆' },
-    { id: 'openrouter', name: 'OpenRouter (Free & Vision)', desc: 'Models with image/video inputs', icon: '◎' },
-    { id: 'openai', name: 'OpenAI', desc: 'GPT-4o multimodal', icon: '○' },
-    { id: 'custom', name: 'Custom Endpoint', desc: 'Ollama / LM Studio', icon: '⬡' },
+    { id: 'gemini', name: 'Google Gemini', desc: 'Gemini 2.0 Flash / Live Voice (Free Vision)', icon: '✦' },
+    { id: 'groq', name: 'Groq Cloud', desc: 'Llama 3.2 Vision (Free Vision)', icon: '⚡' },
+    { id: 'opencode-mimo', name: 'OpenCode MIMO', desc: 'MIMO Multimodal with Free Vision', icon: '◈' },
+    { id: 'openrouter', name: 'OpenRouter', desc: 'Free Multimodal Vision Models', icon: '◎' },
+    { id: 'custom', name: 'Custom / Ollama', desc: 'Local Vision API Endpoint', icon: '⬡' },
     { id: 'simulation', name: 'Offline Mode', desc: 'No API needed', icon: '◇' },
   ];
 
@@ -212,36 +211,38 @@ export default function SettingsModal({ isOpen, onClose, onOpenMemory }) {
                     placeholder="gsk_..."
                   />
                   <InputField
-                    label="Model Name"
+                    label="Model Name (Free Vision capable)"
                     mono
-                    value={config.groqModel || 'llama-3.3-70b-versatile'}
+                    value={config.groqModel || 'llama-3.2-90b-vision-preview'}
                     onChange={e => setConfig({ ...config, groqModel: e.target.value })}
                   />
+                  <span className="text-[10px] text-zinc-400 block">Use llama-3.2-90b-vision-preview or llama-3.2-11b-vision-preview for vision support</span>
                 </div>
               )}
 
-              {config.activeProvider === 'grok' && (
+              {config.activeProvider === 'opencode-mimo' && (
                 <div className="p-4 rounded-2xl bg-zinc-900/60 border border-zinc-800 space-y-3 animate-fade-in">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-semibold text-zinc-200">xAI Grok Configuration</span>
-                    <a href="https://console.x.ai/" target="_blank" rel="noreferrer" className="text-[11px] text-emerald-400 hover:underline flex items-center gap-1">
-                      xAI Console <ExternalLink className="w-3 h-3" />
+                    <span className="text-xs font-semibold text-zinc-200">OpenCode MIMO Configuration (Multimodal Vision)</span>
+                    <a href="https://openrouter.ai/models" target="_blank" rel="noreferrer" className="text-[11px] text-emerald-400 hover:underline flex items-center gap-1">
+                      MIMO Endpoint <ExternalLink className="w-3 h-3" />
                     </a>
                   </div>
                   <InputField
-                    label="xAI API Key"
+                    label="API Key (OpenRouter or Custom MIMO Key)"
                     type="password"
                     mono
-                    value={config.grokKey || ''}
-                    onChange={e => setConfig({ ...config, grokKey: e.target.value })}
-                    placeholder="xai-..."
+                    value={config.opencodeKey || config.openrouterKey || ''}
+                    onChange={e => setConfig({ ...config, opencodeKey: e.target.value })}
+                    placeholder="sk-or-v1-..."
                   />
                   <InputField
                     label="Model Name"
                     mono
-                    value={config.grokModel || 'grok-beta'}
-                    onChange={e => setConfig({ ...config, grokModel: e.target.value })}
+                    value={config.opencodeModel || 'opencode/mimo-vision-instruct:free'}
+                    onChange={e => setConfig({ ...config, opencodeModel: e.target.value })}
                   />
+                  <span className="text-[10px] text-zinc-400 block">Routes via MIMO multimodal vision endpoint</span>
                 </div>
               )}
 
@@ -268,31 +269,6 @@ export default function SettingsModal({ isOpen, onClose, onOpenMemory }) {
                     onChange={e => setConfig({ ...config, openrouterModel: e.target.value })}
                   />
                   <span className="text-[10px] text-zinc-400 block">Try: google/gemini-2.0-flash-lite-001 or meta-llama/llama-3.2-90b-vision-instruct:free</span>
-                </div>
-              )}
-
-              {config.activeProvider === 'openai' && (
-                <div className="p-4 rounded-2xl bg-zinc-900/60 border border-zinc-800 space-y-3 animate-fade-in">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-semibold text-zinc-200">OpenAI Configuration</span>
-                    <a href="https://platform.openai.com/api-keys" target="_blank" rel="noreferrer" className="text-[11px] text-emerald-400 hover:underline flex items-center gap-1">
-                      Platform Keys <ExternalLink className="w-3 h-3" />
-                    </a>
-                  </div>
-                  <InputField
-                    label="OpenAI API Key"
-                    type="password"
-                    mono
-                    value={config.openaiKey || ''}
-                    onChange={e => setConfig({ ...config, openaiKey: e.target.value })}
-                    placeholder="sk-..."
-                  />
-                  <InputField
-                    label="Model Name"
-                    mono
-                    value={config.openaiModel || 'gpt-4o'}
-                    onChange={e => setConfig({ ...config, openaiModel: e.target.value })}
-                  />
                 </div>
               )}
 

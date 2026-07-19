@@ -6,7 +6,7 @@ import {
   fetchAllMemories, addCategorizedMemory, deleteMemoryById, MEMORY_CATEGORIES 
 } from '../services/memoryStore';
 
-export default function MemoryDashboardModal({ isOpen, onClose }) {
+export default function MemoryDashboardModal({ isOpen, onClose, mood, getMoodLabel, getMoodEmoji }) {
   const [memories, setMemories] = useState([]);
   const [activeTab, setActiveTab] = useState('all');
   const [newMemoryText, setNewMemoryText] = useState('');
@@ -63,6 +63,23 @@ export default function MemoryDashboardModal({ isOpen, onClose }) {
             <X className="w-5 h-5" />
           </button>
         </div>
+
+        {/* Companion Mood & Affection Status (Moved from Top Bar) */}
+        {mood && (
+          <div className="px-6 py-2.5 border-b border-zinc-800/80 bg-zinc-900/40 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="text-base">{getMoodEmoji ? getMoodEmoji() : '🥺'}</span>
+              <span className="text-xs font-semibold text-zinc-200 capitalize">{getMoodLabel ? getMoodLabel() : 'lonely'}</span>
+              <span className="text-[10px] font-mono text-zinc-400">({mood.state || 'lonely'})</span>
+            </div>
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-rose-950/40 border border-rose-800/60 text-rose-300 font-mono text-xs">
+                <Heart className="w-3.5 h-3.5 text-rose-400 fill-rose-400" />
+                <span>Affection: {Math.round(mood.affection || 27)}%</span>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Category Tabs */}
         <div className="px-6 py-3 border-b border-zinc-800/60 bg-zinc-950 flex items-center gap-1.5 overflow-x-auto">

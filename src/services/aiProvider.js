@@ -8,15 +8,13 @@ const STORAGE_KEY = 'MYRAA_AI_CONFIG';
 const DEFAULT_CONFIG = {
   activeProvider: 'gemini',
   groqKey: '',
-  groqModel: 'llama-3.3-70b-versatile',
+  groqModel: 'llama-3.2-90b-vision-preview',
   geminiKey: '',
   geminiModel: 'gemini-2.0-flash',
-  grokKey: '',
-  grokModel: 'grok-beta',
+  opencodeKey: '',
+  opencodeModel: 'opencode/mimo-vision-instruct:free',
   openrouterKey: '',
   openrouterModel: 'google/gemini-2.0-flash-lite-001',
-  openaiKey: '',
-  openaiModel: 'gpt-4o',
   customUrl: 'http://localhost:11434/v1',
   customKey: '',
   customModel: 'llama3',
@@ -241,11 +239,10 @@ export async function sendAiChatMessage(userMessage, conversationHistory = [], s
 
   let apiKey = '', model = '', baseUrl = '';
 
-  if (provider === 'groq') { apiKey = config.groqKey; model = config.groqModel; }
+  if (provider === 'groq') { apiKey = config.groqKey; model = config.groqModel || 'llama-3.2-90b-vision-preview'; }
   else if (provider === 'gemini') { apiKey = config.geminiKey; model = config.geminiModel; }
-  else if (provider === 'grok') { apiKey = config.grokKey; model = config.grokModel; }
+  else if (provider === 'opencode-mimo') { apiKey = config.opencodeKey || config.openrouterKey; model = config.opencodeModel || 'opencode/mimo-vision-instruct:free'; }
   else if (provider === 'openrouter') { apiKey = config.openrouterKey; model = config.openrouterModel; }
-  else if (provider === 'openai') { apiKey = config.openaiKey; model = config.openaiModel; }
   else if (provider === 'custom') { apiKey = config.customKey; baseUrl = config.customUrl; model = config.customModel; }
 
   if (!apiKey && provider !== 'custom') {
