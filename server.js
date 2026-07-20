@@ -526,8 +526,20 @@ app.post('/api/ai/proxy', async (req, res) => {
       const geminiModel = model || 'gemini-2.0-flash';
       endpointUrl = `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${apiKey}`;
 
-      const rawContents = messages.map(m => ({
-        role: m.role === 'assistant' ? 'model' : (m.role === 'system' ? 'user' : m.role),
+      let systemPromptText = '';
+      const dialogueMessages = [];
+
+      messages.forEach(m => {
+        if (m.role === 'system') {
+          const sysText = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
+          systemPromptText = systemPromptText ? `${systemPromptText}\n${sysText}` : sysText;
+        } else {
+          dialogueMessages.push(m);
+        }
+      });
+
+      const rawContents = dialogueMessages.map(m => ({
+        role: m.role === 'assistant' ? 'model' : 'user',
         parts: Array.isArray(m.content)
           ? m.content.map(c => {
               if (c.type === 'image_url') {
@@ -540,7 +552,7 @@ app.post('/api/ai/proxy', async (req, res) => {
           : [{ text: typeof m.content === 'string' ? m.content : JSON.stringify(m.content) }]
       }));
 
-      // Merge consecutive turns with the same role so Gemini doesn't error on consecutive 'user' turns
+      // Merge consecutive turns with the same role
       const contents = [];
       for (const item of rawContents) {
         if (contents.length > 0 && contents[contents.length - 1].role === item.role) {
@@ -550,16 +562,25 @@ app.post('/api/ai/proxy', async (req, res) => {
         }
       }
 
+      const payload = {
+        contents,
+        generationConfig: { temperature, maxOutputTokens: maxTokens }
+      };
+
+      if (systemPromptText) {
+        payload.systemInstruction = { parts: [{ text: systemPromptText }] };
+      }
+
       trackRequest();
       const geminiRes = await fetch(endpointUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contents, generationConfig: { temperature, maxOutputTokens: maxTokens } })
+        body: JSON.stringify(payload)
       });
       const data = await geminiRes.json();
       if (data.error) return res.status(400).json({ error: data.error.message });
 
-      const textOutput = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      const textOutput = data.candidates?.[0]?.content?.parts?.[0]?.text || '[emotion:happy] I\'m right here with you, Aarav!';
       return res.json({ choices: [{ message: { role: 'assistant', content: textOutput } }] });
     } else if (provider === 'custom') {
       const targetBase = (baseUrl || 'http://localhost:11434/v1').replace(/\/$/, '');
