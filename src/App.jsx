@@ -10,7 +10,7 @@ import SettingsModal from './components/SettingsModal';
 import MemoryDashboardModal from './components/MemoryDashboardModal';
 import BrowserAgentModal from './components/BrowserAgentModal';
 import { sendAiChatMessage, cleanAiResponseText, getAiConfig, extractEmotion } from './services/aiProvider';
-import { addCategorizedMemory, getLocalMemories } from './services/memoryStore';
+import { addCategorizedMemory, getLocalMemories, autoExtractMemoriesFromChat } from './services/memoryStore';
 import { createLiveVoiceEngine } from './services/liveVoiceEngine';
 import { initMoodEngine, updateMood, getMood, getMoodEmoji, getMoodLabel } from './services/moodEngine';
 import { getSessionGreeting, checkIdlePrompt, getTimeContext } from './services/proactiveEngine';
@@ -284,6 +284,7 @@ export default function App() {
 
     // Check and execute desktop/web command immediately ("open youtube", etc.)
     executeDirectCommand(textToSend);
+    autoExtractMemoriesFromChat(textToSend);
 
     const screenToUse = screenshot || attachedScreenshot || (isContinuousVision ? latestCapturedFrameRef.current : null);
     setLastActivityTime(Date.now());
@@ -371,7 +372,7 @@ export default function App() {
       const res = await fetch(`http://${backendHost}:3001/api/ai/tts`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, voice: 'en-US-AnaNeural' })
+        body: JSON.stringify({ text, voice: 'en-US-AvaNeural' })
       });
       if (res.ok) {
         const blob = await res.blob();
@@ -391,8 +392,8 @@ export default function App() {
     if (!window.speechSynthesis) return;
     const speakWithAvailableVoices = () => {
       const utterance = new SpeechSynthesisUtterance(text);
-      utterance.rate = 0.96;
-      utterance.pitch = 1.25;
+      utterance.rate = 0.98;
+      utterance.pitch = 1.0;
 
       const voices = window.speechSynthesis.getVoices();
       const femaleCandidates = voices.filter(v => {

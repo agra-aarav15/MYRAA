@@ -114,3 +114,39 @@ export function formatMemoryForPrompt() {
 
   return text;
 }
+
+/**
+ * Self-evolving memory extractor.
+ * Automatically scans user text for preferences, active projects, habits, and goals to learn continuously.
+ * @param {string} userText 
+ */
+export async function autoExtractMemoriesFromChat(userText = '') {
+  if (!userText || typeof userText !== 'string' || userText.trim().length < 4) return;
+  const lower = userText.toLowerCase().trim();
+
+  // Patterns for self-evolving memory
+  const patterns = [
+    { regex: /(?:i love|i like|i really enjoy|favorite)\s+(?:listening to|playing|watching|using)?\s*(.+)/i, category: 'preference', prefix: 'Aarav enjoys' },
+    { regex: /(?:i am working on|i'm building|i'm coding|my project is)\s+(.+)/i, category: 'project', prefix: 'Aarav is actively working on' },
+    { regex: /(?:my goal is|i want to learn|i want to build)\s+(.+)/i, category: 'goal', prefix: 'Aarav wants to' },
+    { regex: /(?:i always|i usually|every day i)\s+(.+)/i, category: 'behavior', prefix: 'Aarav' }
+  ];
+
+  for (const p of patterns) {
+    const match = lower.match(p.regex);
+    if (match && match[1]) {
+      const extracted = match[1].replace(/[.!?,]$/, '').trim();
+      if (extracted.length > 2 && extracted.length < 120) {
+        const memoryText = `${p.prefix} ${extracted}.`;
+        const existing = getLocalMemories();
+        // Prevent duplicate memories
+        if (!existing.some(m => m.text.toLowerCase().includes(extracted.toLowerCase()))) {
+          console.log(`[Evolving Memory] Auto-learned new memory: "${memoryText}"`);
+          await addCategorizedMemory(p.category, memoryText);
+          break;
+        }
+      }
+    }
+  }
+}
+

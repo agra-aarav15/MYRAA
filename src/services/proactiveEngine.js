@@ -73,7 +73,8 @@ export function getSessionGreeting(memories = [], lastSessionTime = null) {
   if (memories && memories.length > 0) {
     // Pick a random memory to ask about
     const randomMemory = memories[Math.floor(Math.random() * memories.length)];
-    greeting += ` Are we working on ${randomMemory} today?`;
+    const memText = typeof randomMemory === 'string' ? randomMemory : (randomMemory.text || 'our projects');
+    greeting += ` Are we working on ${memText} today?`;
   } else {
     greeting += " What's on your mind today?";
   }
