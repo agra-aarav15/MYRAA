@@ -97,7 +97,7 @@ export default function AvatarCanvas({
       model.position.x = -center.x * scale;
       model.position.y = (-box.min.y * scale) - 0.15;
       model.position.z = -center.z * scale;
-      model.rotation.y = Math.PI; // Make the model face forward directly toward Aarav!
+      model.rotation.y = 0; // Model faces forward directly toward Aarav!
 
       // Collect bone and morph mesh references
       const bones = {
