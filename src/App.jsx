@@ -378,9 +378,9 @@ export default function App() {
         const url = URL.createObjectURL(blob);
         const audio = new Audio(url);
         neuralAudioRef.current = audio;
-        audio.onplay = () => { setIsSpeaking(true); setAvatarExpression('speaking'); };
-        audio.onended = () => { setIsSpeaking(false); setAvatarExpression('happy'); URL.revokeObjectURL(url); neuralAudioRef.current = null; };
-        audio.onerror = () => { setIsSpeaking(false); setAvatarExpression('happy'); URL.revokeObjectURL(url); neuralAudioRef.current = null; };
+        audio.onplay = () => { setIsSpeaking(true); };
+        audio.onended = () => { setIsSpeaking(false); URL.revokeObjectURL(url); neuralAudioRef.current = null; };
+        audio.onerror = () => { setIsSpeaking(false); URL.revokeObjectURL(url); neuralAudioRef.current = null; };
         await audio.play();
         return;
       }
@@ -408,9 +408,9 @@ export default function App() {
 
       if (femaleVoice) utterance.voice = femaleVoice;
 
-      utterance.onstart = () => { setIsSpeaking(true); setAvatarExpression('speaking'); };
-      utterance.onend = () => { setIsSpeaking(false); setAvatarExpression('happy'); };
-      utterance.onerror = () => { setIsSpeaking(false); setAvatarExpression('happy'); };
+      utterance.onstart = () => { setIsSpeaking(true); };
+      utterance.onend = () => { setIsSpeaking(false); };
+      utterance.onerror = () => { setIsSpeaking(false); };
 
       window.speechSynthesis.speak(utterance);
       if (window.speechSynthesis.paused) window.speechSynthesis.resume();
@@ -460,18 +460,19 @@ export default function App() {
           executeDirectCommand(finalTranscript);
           handleSendMessage(finalTranscript);
         }
-        // Auto-restart listening after a brief pause (waits for Myraa to finish speaking)
+        // Auto-restart listening after a brief pause (waits for Myraa to finish processing and speaking)
         if (continuousListenRef.current) {
           const waitForSpeech = () => {
-            if (neuralAudioRef.current || window.speechSynthesis?.speaking) {
-              setTimeout(waitForSpeech, 300);
+            if (isProcessing || isSpeaking || neuralAudioRef.current || window.speechSynthesis?.speaking) {
+              setTimeout(waitForSpeech, 350);
             } else {
               setTimeout(() => {
                 if (continuousListenRef.current) startSpeechRecognition();
-              }, 400);
+              }, 450);
             }
           };
-          waitForSpeech();
+          // Brief initial delay to allow handleSendMessage state transition to apply
+          setTimeout(waitForSpeech, 200);
         }
       };
       rec.onerror = (err) => {

@@ -18,59 +18,59 @@ export async function executeDirectCommand(text = '') {
   let popupUrl = null;
 
   // Web shortcuts
-  if (lower.includes('open youtube') || lower === 'youtube') {
+  if (/open(ing)?\s+(the\s+)?youtube/i.test(lower) || lower === 'youtube') {
     toolName = 'openWebsite';
     args = { name: 'youtube' };
     popupUrl = 'https://www.youtube.com';
-  } else if (lower.includes('open google') || lower === 'google') {
+  } else if (/open(ing)?\s+(the\s+)?google/i.test(lower) || lower === 'google') {
     toolName = 'openWebsite';
     args = { name: 'google' };
     popupUrl = 'https://www.google.com';
-  } else if (lower.includes('open github') || lower === 'github') {
+  } else if (/open(ing)?\s+(the\s+)?github/i.test(lower) || lower === 'github') {
     toolName = 'openWebsite';
     args = { name: 'github' };
     popupUrl = 'https://github.com';
-  } else if (lower.includes('open chatgpt') || lower.includes('open chat gpt')) {
+  } else if (/open(ing)?\s+(the\s+)?chat\s*gpt/i.test(lower)) {
     toolName = 'openWebsite';
     args = { name: 'chatgpt' };
     popupUrl = 'https://chat.openai.com';
-  } else if (lower.includes('open twitter') || lower.includes('open x.com')) {
+  } else if (/open(ing)?\s+(the\s+)?(twitter|x\.com)/i.test(lower)) {
     toolName = 'openWebsite';
     args = { name: 'twitter' };
     popupUrl = 'https://x.com';
   }
   // Search shortcuts
-  else if (lower.startsWith('search youtube for ') || lower.includes('on youtube')) {
+  else if (/search\s+youtube\s+for|play\s+.+\s+on\s+youtube/i.test(lower)) {
     const q = lower.replace(/search youtube for |play | on youtube/gi, '').trim();
     toolName = 'searchYouTube';
     args = { query: q };
     popupUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(q)}`;
-  } else if (lower.startsWith('search google for ') || lower.startsWith('search for ')) {
+  } else if (/search\s+(google\s+for|for)\s+/i.test(lower)) {
     const q = lower.replace(/search google for |search for /gi, '').trim();
     toolName = 'searchGoogle';
     args = { query: q };
     popupUrl = `https://www.google.com/search?q=${encodeURIComponent(q)}`;
   }
   // App shortcuts
-  else if (lower.includes('open notepad')) {
+  else if (/open(ing)?\s+(the\s+)?notepad/i.test(lower)) {
     toolName = 'openApplication';
     args = { name: 'notepad' };
-  } else if (lower.includes('open calculator') || lower.includes('open calc')) {
+  } else if (/open(ing)?\s+(the\s+)?calc(ulator)?/i.test(lower)) {
     toolName = 'openApplication';
     args = { name: 'calculator' };
-  } else if (lower.includes('open chrome')) {
+  } else if (/open(ing)?\s+(the\s+)?chrome/i.test(lower)) {
     toolName = 'openApplication';
     args = { name: 'chrome' };
-  } else if (lower.includes('open vscode') || lower.includes('open code')) {
+  } else if (/open(ing)?\s+(the\s+)?(vs\s*code|code)/i.test(lower)) {
     toolName = 'openApplication';
     args = { name: 'vscode' };
   }
   // Volume controls
-  else if (lower.includes('volume up') || lower.includes('increase volume')) {
+  else if (/volume\s+up|increase\s+volume/i.test(lower)) {
     toolName = 'volumeUp';
-  } else if (lower.includes('volume down') || lower.includes('decrease volume')) {
+  } else if (/volume\s+down|decrease\s+volume/i.test(lower)) {
     toolName = 'volumeDown';
-  } else if (lower === 'mute' || lower === 'unmute' || lower.includes('toggle mute')) {
+  } else if (/^(mute|unmute)$/i.test(lower) || /toggle\s+mute/i.test(lower)) {
     toolName = 'muteToggle';
   }
 

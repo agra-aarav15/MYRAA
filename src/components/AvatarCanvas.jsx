@@ -71,10 +71,21 @@ export default function AvatarCanvas({
     rim.position.set(0, 3, -2);
     scene.add(rim);
 
-    // Load model
+    // Load expressive model (kawaii_girl.glb with fallback to one_one.glb)
     const loader = new GLTFLoader();
-    loader.load('/model/source/one_one.glb', (gltf) => {
-      const model = gltf.scene;
+    loader.load('/model/source/kawaii_girl.glb', (gltf) => {
+      setupModel(gltf.scene);
+    }, undefined, (err) => {
+      console.warn('Falling back to one_one.glb:', err);
+      loader.load('/model/source/one_one.glb', (gltf2) => {
+        setupModel(gltf2.scene);
+      }, undefined, (err2) => {
+        console.error('Model load error:', err2);
+        setLoading(false);
+      });
+    });
+
+    const setupModel = (model) => {
       modelRef.current = model;
 
       // Scale & center
@@ -88,9 +99,16 @@ export default function AvatarCanvas({
       model.position.z = -center.z * scale;
       model.rotation.y = Math.PI; // Make the model face forward directly toward Aarav!
 
-      // Collect bone references by name pattern
-      const bones = {};
+      // Collect bone and morph mesh references
+      const bones = {
+        morphMeshes: []
+      };
+
       model.traverse((node) => {
+        if (node.isMesh && node.morphTargetDictionary && node.morphTargetInfluences) {
+          bones.morphMeshes.push(node);
+        }
+
         if (!node.isBone) return;
         const n = node.name.toLowerCase().replace(/_/g, ' ');
 
@@ -104,14 +122,14 @@ export default function AvatarCanvas({
         else if (n.includes('hips')) bones.hips = node;
 
         // Arms (normalize underscores and spaces)
-        if (n.includes('left arm') || n.includes('left_arm')) bones.leftArm = node;
-        if (n.includes('right arm') || n.includes('right_arm')) bones.rightArm = node;
-        if (n.includes('left shoulder') || n.includes('left_shoulder')) bones.leftShoulder = node;
-        if (n.includes('right shoulder') || n.includes('right_shoulder')) bones.rightShoulder = node;
-        if (n.includes('left elbow') || n.includes('left_elbow')) bones.leftElbow = node;
-        if (n.includes('right elbow') || n.includes('right_elbow')) bones.rightElbow = node;
-        if (n.includes('left wrist') || n.includes('left_wrist')) bones.leftWrist = node;
-        if (n.includes('right wrist') || n.includes('right_wrist')) bones.rightWrist = node;
+        if (n.includes('left arm') || n.includes('left_arm') || node.name === 'upper_armL') bones.leftArm = node;
+        if (n.includes('right arm') || n.includes('right_arm') || node.name === 'upper_armR') bones.rightArm = node;
+        if (n.includes('left shoulder') || n.includes('left_shoulder') || node.name === 'shoulderL') bones.leftShoulder = node;
+        if (n.includes('right shoulder') || n.includes('right_shoulder') || node.name === 'shoulderR') bones.rightShoulder = node;
+        if (n.includes('left elbow') || n.includes('left_elbow') || node.name === 'forearmL') bones.leftElbow = node;
+        if (n.includes('right elbow') || n.includes('right_elbow') || node.name === 'forearmR') bones.rightElbow = node;
+        if (n.includes('left wrist') || n.includes('left_wrist') || node.name === 'handL') bones.leftWrist = node;
+        if (n.includes('right wrist') || n.includes('right_wrist') || node.name === 'handR') bones.rightWrist = node;
 
         // Hair chains for physics
         if (n.includes('hair')) {
@@ -129,8 +147,8 @@ export default function AvatarCanvas({
       // exact name matching for eyes
       model.traverse((node) => {
         if (!node.isBone) return;
-        if (node.name === 'Eye_L_4') bones.eyeL = node;
-        if (node.name === 'Eye_R_5') bones.eyeR = node;
+        if (node.name === 'Eye_L' || node.name === 'Eye_L_4') bones.eyeL = node;
+        if (node.name === 'Eye_R' || node.name === 'Eye_R_5') bones.eyeR = node;
       });
 
       bonesRef.current = bones;
@@ -169,10 +187,7 @@ export default function AvatarCanvas({
 
       scene.add(model);
       setLoading(false);
-    }, undefined, (err) => {
-      console.error('Model load error:', err);
-      setLoading(false);
-    });
+    };
 
     const onPointerMove = (e) => {
       if (!containerRef.current) return;
@@ -213,13 +228,30 @@ export default function AvatarCanvas({
     let nextIdleShiftTime = 0;
     let idleSubPose = { x: 0, y: 0, z: 0 };
 
+    const blendMorph = (names, targetValue, speed, dt) => {
+      const nameArr = Array.isArray(names) ? names : [names];
+      const meshes = bonesRef.current?.morphMeshes;
+      if (!meshes || meshes.length === 0) return;
+
+      meshes.forEach(mesh => {
+        if (!mesh.morphTargetDictionary || !mesh.morphTargetInfluences) return;
+        nameArr.forEach(name => {
+          const idx = mesh.morphTargetDictionary[name];
+          if (idx !== undefined) {
+            const curr = mesh.morphTargetInfluences[idx] || 0;
+            mesh.morphTargetInfluences[idx] = curr + (targetValue - curr) * Math.min(speed * dt * 60, 1);
+          }
+        });
+      });
+    };
+
     const animate = () => {
       frameId = requestAnimationFrame(animate);
       const dt = Math.min(clock.getDelta(), 0.05);
       const t = clock.getElapsedTime();
       const bones = bonesRef.current;
 
-      if (!modelRef.current || !bones.hips) {
+      if (!modelRef.current || !bones.head) {
         renderer.render(scene, camera);
         return;
       }
@@ -237,7 +269,7 @@ export default function AvatarCanvas({
       const breathAmp = 0.008 * (0.8 + moodEnergy * 0.4) * (expr === 'sad' ? 0.8 : 1);
       const swaySpeed = 0.4 * (0.8 + moodEnergy * 0.5) * (expr === 'excited' ? 1.5 : 1);
 
-      // --- Blink Cycle ---
+      // --- Blink Cycle (True eyelid closure blendshapes) ---
       if (t > nextBlinkTime) {
         isBlinking = true;
         blinkPhase = 0;
@@ -245,13 +277,14 @@ export default function AvatarCanvas({
       }
       let blinkValue = 0;
       if (isBlinking) {
-        blinkPhase += dt * 18; // blink speed
+        blinkPhase += dt * 16; // blink speed
         if (blinkPhase >= Math.PI) {
           isBlinking = false;
         } else {
-          blinkValue = Math.sin(blinkPhase) * 0.3; // eye rotation x for blink
+          blinkValue = Math.sin(blinkPhase);
         }
       }
+      blendMorph(['Blink L', 'Blinl R', 'Blink R'], blinkValue, 0.8, dt);
 
       // --- Idle Variation ---
       if (t > nextIdleShiftTime) {
@@ -263,7 +296,7 @@ export default function AvatarCanvas({
         nextIdleShiftTime = t + 8 + Math.random() * 7; // 8-15s
       }
 
-      // --- Expression Targets ---
+      // --- Expression Blendshapes & Body Targets ---
       let tHead = { x: idleSubPose.x, y: idleSubPose.y, z: idleSubPose.z };
       let tChest = { x: 0, y: 0, z: 0 };
       let tShoulderL = { x: 0, y: 0, z: 0 };
@@ -273,65 +306,107 @@ export default function AvatarCanvas({
       let tEye = { x: 0, y: 0, z: 0 };
       let trackFactor = 1.0;
       
-      // Mood baseline modifiers
       if (moodHappiness > 0.6) {
         tHead.x -= 0.02; // slightly looking up/bright
       }
 
+      const isSpeakingActive = isSpeakingRef.current || expr === 'speaking';
+
       switch(expr) {
         case 'happy':
+        case 'excited':
           tHead.z += 0.05;
-          tChest.x -= 0.03; // slight lift
-          tArmL.z -= 0.1; 
-          tArmR.z += 0.1;
+          tChest.x -= 0.03;
+          tArmL.z -= 0.12; 
+          tArmR.z += 0.12;
+          blendMorph(['Up L', 'Up R'], 0.85, 0.12, dt);
+          blendMorph(['Angry L', 'Angry R', 'Sorrow L', 'Sorrow R', 'Down L', 'Down R'], 0.0, 0.12, dt);
+          if (!isSpeakingActive) {
+            blendMorph(['E;I'], 0.35, 0.12, dt); // Sweet warm smile
+            blendMorph(['A', 'O', 'U'], 0.0, 0.12, dt);
+          }
           break;
         case 'thinking':
           tHead.z -= 0.08;
           tHead.x -= 0.05;
-          tEye.x -= 0.1;
-          tEye.y += 0.15;
+          tEye.x -= 0.08;
+          tEye.y += 0.12;
           trackFactor = 0.3;
-          break;
-        case 'excited':
-          tChest.x -= 0.05;
-          tArmL.z -= 0.15;
-          tArmR.z += 0.15;
+          blendMorph(['Up L'], 0.8, 0.12, dt);
+          blendMorph(['Down R'], 0.35, 0.12, dt);
+          blendMorph(['Angry L', 'Angry R', 'Sorrow L', 'Sorrow R', 'Up R'], 0.0, 0.12, dt);
+          if (!isSpeakingActive) {
+            blendMorph(['A', 'E;I', 'O', 'U'], 0.0, 0.12, dt);
+          }
           break;
         case 'sad':
-          tShoulderL.z -= 0.1;
-          tShoulderR.z += 0.1;
-          tHead.x += 0.1;
-          tChest.x += 0.05;
+        case 'shy':
+          tShoulderL.z += 0.06;
+          tShoulderR.z -= 0.06;
+          tHead.x += 0.12;
+          tHead.y += 0.18;
           trackFactor = 0.2;
+          blendMorph(['Sorrow L', 'Sorrow R'], 0.95, 0.12, dt);
+          blendMorph(['Down L', 'Down R'], 0.55, 0.12, dt);
+          blendMorph(['Up L', 'Up R', 'Angry L', 'Angry R'], 0.0, 0.12, dt);
+          if (!isSpeakingActive) {
+            blendMorph(['O'], 0.2, 0.12, dt); // gentle pout
+            blendMorph(['A', 'E;I', 'U'], 0.0, 0.12, dt);
+          }
           break;
         case 'angry':
-          tShoulderL.z += 0.05;
-          tShoulderR.z -= 0.05;
-          tHead.x += 0.08;
+          tShoulderL.z += 0.08;
+          tShoulderR.z -= 0.08;
+          tHead.x += 0.09;
           tEye.x -= 0.05;
-          trackFactor = 1.2;
-          break;
-        case 'shy':
-          tHead.y += 0.25;
-          tHead.x += 0.08;
-          tShoulderL.z += 0.05;
-          tShoulderR.z -= 0.05;
-          trackFactor = 0.1;
+          trackFactor = 1.3;
+          blendMorph(['Angry L', 'Angry R'], 1.0, 0.15, dt);
+          blendMorph(['Down L', 'Down R'], 0.45, 0.15, dt);
+          blendMorph(['Up L', 'Up R', 'Sorrow L', 'Sorrow R'], 0.0, 0.15, dt);
+          if (!isSpeakingActive) {
+            blendMorph(['O'], 0.45, 0.15, dt); // Cute angry pouty lips!
+            blendMorph(['A', 'E;I', 'U'], 0.0, 0.15, dt);
+          }
           break;
         case 'listening':
           tHead.z += 0.04;
           tHead.x -= 0.02;
           trackFactor = 1.1;
-          break;
-        case 'speaking':
-          // handled dynamically
+          blendMorph(['Up L', 'Up R'], 0.3, 0.12, dt);
+          blendMorph(['Angry L', 'Angry R', 'Sorrow L', 'Sorrow R', 'Down L', 'Down R'], 0.0, 0.12, dt);
+          if (!isSpeakingActive) blendMorph(['A', 'E;I', 'O', 'U'], 0.0, 0.12, dt);
           break;
         case 'idle':
         default:
+          blendMorph(['Up L', 'Up R'], 0.15, 0.1, dt);
+          blendMorph(['Angry L', 'Angry R', 'Sorrow L', 'Sorrow R', 'Down L', 'Down R'], 0.0, 0.1, dt);
+          if (!isSpeakingActive) blendMorph(['A', 'E;I', 'O', 'U'], 0.0, 0.1, dt);
           break;
       }
 
-      // LERP state targets (0.5s transition -> speed ~0.03 per frame at 60fps)
+      // --- True Lip-Sync Talking Animation ---
+      if (isSpeakingActive) {
+        speakPhase += dt * (12.0 + moodEnergy * 3.0); // Real human speaking frequency (~12-15Hz)
+        const vA = (Math.sin(speakPhase) * 0.5 + 0.5) * 0.75;
+        const vI = (Math.cos(speakPhase * 1.35) * 0.5 + 0.5) * 0.45;
+        const vO = (Math.sin(speakPhase * 0.7 + 1.2) * 0.5 + 0.5) * 0.4;
+        blendMorph(['A'], vA, 0.6, dt);
+        blendMorph(['E;I'], vI, 0.6, dt);
+        blendMorph(['O', 'U'], vO, 0.6, dt);
+
+        // Natural head micro-nod & body sway while speaking
+        const microNod = Math.sin(speakPhase * 0.4) * 0.012;
+        const bodySway = Math.sin(speakPhase * 0.25) * 0.01;
+        const shoulderPulse = Math.sin(speakPhase * 0.5) * 0.006;
+        if (bones.head) bones.head.rotation.x += microNod;
+        if (bones.chest) bones.chest.rotation.y = lerp(bones.chest.rotation.y || 0, bodySway, 0.05);
+        if (bones.upperChest) bones.upperChest.rotation.x = lerp(bones.upperChest.rotation.x || 0, (bones.upperChest.userData.restRotation?.x || 0) + shoulderPulse, 0.05);
+        if (bones.leftWrist) bones.leftWrist.rotation.z = lerp(bones.leftWrist.rotation.z || 0, (bones.leftWrist.userData.restRotation?.z || 0) + Math.sin(speakPhase * 0.35) * 0.06, 0.05);
+      } else {
+        speakPhase *= 0.92;
+      }
+
+      // LERP state targets
       const blendSpeed = 0.04;
       poseState.head.x = lerp(poseState.head.x, tHead.x, blendSpeed);
       poseState.head.y = lerp(poseState.head.y, tHead.y, blendSpeed);
@@ -353,7 +428,7 @@ export default function AvatarCanvas({
         bones.chest.rotation.x = lerp(bones.chest.rotation.x, (bones.chest.userData.restRotation?.x || 0) + breathCycle * 0.6 + poseState.chest.x, 0.05);
       }
 
-      // --- 2. HEAD TRACKING & EXPRESSION ---
+      // --- 2. HEAD TRACKING ---
       const targetHeadY = mouseRef.current.x * 0.3 * trackFactor + poseState.head.y;
       const targetHeadX = -mouseRef.current.y * 0.15 * trackFactor + poseState.head.x;
       if (bones.head) {
@@ -365,9 +440,9 @@ export default function AvatarCanvas({
         bones.neck.rotation.y = lerp(bones.neck.rotation.y, targetHeadY * 0.3, 0.03);
       }
 
-      // --- 3. EYE TRACKING & BLINK ---
+      // --- 3. EYE TRACKING ---
       const targetEyeY = mouseRef.current.x * 0.15 * trackFactor + poseState.eyeL.y;
-      const targetEyeX = -mouseRef.current.y * 0.1 * trackFactor + poseState.eyeL.x + blinkValue;
+      const targetEyeX = -mouseRef.current.y * 0.1 * trackFactor + poseState.eyeL.x;
       if (bones.eyeL) {
         bones.eyeL.rotation.y = lerp(bones.eyeL.rotation.y, targetEyeY, 0.08);
         bones.eyeL.rotation.x = lerp(bones.eyeL.rotation.x, targetEyeX, 0.12);
@@ -393,78 +468,46 @@ export default function AvatarCanvas({
         bones.rightArm.rotation.z = lerp(bones.rightArm.rotation.z, (bones.rightArm.userData.restRotation?.z || 0.15) + poseState.rightArm.z, 0.05);
       }
 
-      // --- 5. SPEAKING ANIMATION (subtle, human-like — NOT dog-like nodding) ---
-      if (isSpeakingRef.current || expr === 'speaking') {
-        speakPhase += dt * (2.8 + moodEnergy * 0.8);
-        // Gentle micro-nod (very subtle, barely perceptible)
-        const microNod = Math.sin(speakPhase) * 0.005;
-        // Soft body sway while speaking (natural weight shift)
-        const bodySway = Math.sin(speakPhase * 0.35) * 0.008;
-        // Subtle shoulder emphasis
-        const shoulderPulse = Math.sin(speakPhase * 0.7) * 0.004;
-        if (bones.head) {
-          bones.head.rotation.x += microNod;
-        }
-        if (bones.chest) {
-          bones.chest.rotation.y = lerp(bones.chest.rotation.y || 0, bodySway, 0.03);
-        }
-        if (bones.upperChest) {
-          bones.upperChest.rotation.x = lerp(bones.upperChest.rotation.x || 0, (bones.upperChest.userData.restRotation?.x || 0) + shoulderPulse, 0.04);
-        }
-        // Gentle hand gesture while speaking
-        if (bones.leftWrist) {
-          bones.leftWrist.rotation.z = lerp(bones.leftWrist.rotation.z || 0, (bones.leftWrist.userData.restRotation?.z || 0) + Math.sin(speakPhase * 0.5) * 0.04, 0.03);
-        }
-      } else {
-        speakPhase *= 0.95;
-      }
-
-      // --- 6. IDLE MICRO-SWAY ---
+      // --- 5. IDLE MICRO-SWAY ---
       const excitedSway = expr === 'excited' ? Math.sin(t * swaySpeed * 2) * 0.02 : 0;
       const idleY = Math.sin(t * swaySpeed) * 0.006 + excitedSway;
       if (bones.hips) {
         bones.hips.rotation.y = lerp(bones.hips.rotation.y || 0, idleY, 0.03);
       }
 
-      // --- 7. HAIR PHYSICS (bouncy, gravity-aware, head-responsive) ---
+      // --- 6. HAIR PHYSICS ---
       if (bones.hairBones && bones.hairBones.length > 0) {
         const headTurnVel = bones.head ? bones.head.rotation.y : 0;
         bones.hairBones.forEach((hb, i) => {
           if (!hairPhysics[i]) hairPhysics[i] = { vel: 0, angle: 0, prevHeadY: 0 };
           const hp = hairPhysics[i];
 
-          // Head rotation influence (hair follows head movement with inertia)
           const headDelta = headTurnVel - (hp.prevHeadY || 0);
           hp.prevHeadY = headTurnVel;
 
-          // Natural wind/movement noise  
           const windLayer1 = Math.sin(t * 0.8 + i * 1.3) * 0.025;
           const windLayer2 = Math.sin(t * 1.6 + i * 0.5) * 0.012;
           const exciteMotion = expr === 'excited' ? Math.sin(t * 3 + i) * 0.035 : 0;
-          
-          // Gravity pull (hair hangs down slightly)
           const gravityPull = 0.005 * Math.sin(i * 0.8);
           
           const target = headTurnVel * 0.4 + windLayer1 + windLayer2 + exciteMotion + gravityPull;
           
-          // Spring physics with lower damping for bounce
-          const springForce = (target - hp.angle) * 18;
-          hp.vel += (springForce - headDelta * 60) * dt; // Head turn inertia
-          hp.vel *= 0.78; // Less damping = more bounce
-          hp.angle += hp.vel * dt;
-          hp.angle = Math.max(-0.4, Math.min(0.4, hp.angle)); // Clamp
-          
-          hb.rotation.z = (hb.userData.restRotation?.z || 0) + hp.angle;
-          hb.rotation.x = (hb.userData.restRotation?.x || 0) + Math.sin(t * 0.6 + i * 0.9) * 0.012 + gravityPull;
+          const force = (target - hp.angle) * 0.18 - headDelta * 0.25;
+          hp.vel = (hp.vel + force) * 0.86;
+          hp.angle += hp.vel;
+
+          hb.rotation.z = lerp(hb.rotation.z, (hb.userData.restRotation?.z || 0) + hp.angle, 0.2);
+          hb.rotation.x = lerp(hb.rotation.x, (hb.userData.restRotation?.x || 0) + Math.abs(hp.angle * 0.3) + windLayer1 * 0.5, 0.2);
         });
       }
 
-      // --- 8. SKIRT PHYSICS ---
+      // --- 7. SKIRT CLOTH PHYSICS ---
       if (bones.skirtBones && bones.skirtBones.length > 0) {
+        const hipSway = bones.hips ? bones.hips.rotation.y : 0;
         bones.skirtBones.forEach((sb, i) => {
-          const exciteSwing = expr === 'excited' ? Math.sin(t * 2.5 + i) * 0.02 : 0;
-          const swing = Math.sin(t * 1.0 + i * 1.5) * 0.01 + exciteSwing;
-          sb.rotation.z = (sb.userData.restRotation?.z || 0) + swing;
+          const skirtTarget = -hipSway * 0.4 + Math.sin(t * 1.2 + i * 0.8) * 0.015;
+          sb.rotation.z = lerp(sb.rotation.z, (sb.userData.restRotation?.z || 0) + skirtTarget, 0.06);
+          sb.rotation.x = lerp(sb.rotation.x, (sb.userData.restRotation?.x || 0) + Math.abs(skirtTarget * 0.2), 0.06);
         });
       }
 
@@ -473,64 +516,44 @@ export default function AvatarCanvas({
 
     animate();
 
-    const onResize = () => {
-      if (!containerRef.current) return;
-      const nw = containerRef.current.clientWidth;
-      const nh = containerRef.current.clientHeight;
-      const newAspect = nw / nh;
-      camera.aspect = newAspect;
-      camera.fov = isMobile || newAspect < 1 ? 34 : 30;
-      const newCamZ = isMobile || newAspect < 1 ? 3.1 : 2.75;
-      camera.position.set(0, 0.90, newCamZ);
-      camera.updateProjectionMatrix();
-      renderer.setSize(nw, nh);
-    };
-    window.addEventListener('resize', onResize);
-
     return () => {
+      if (frameId) cancelAnimationFrame(frameId);
       window.removeEventListener('mousemove', onPointerMove);
       window.removeEventListener('touchmove', onPointerMove);
-      window.removeEventListener('resize', onResize);
-      cancelAnimationFrame(frameId);
       renderer.dispose();
     };
-  }, [mobileLowPower, isMobile]);
+  }, [isMobile, mobileLowPower]);
 
   return (
-    <div className="w-full h-full relative">
-      {mobileLowPower ? (
-        <div className="w-full h-full flex flex-col items-center justify-center p-6 text-center bg-zinc-950">
-          <div className="w-28 h-28 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center text-4xl shadow-xl mb-4 animate-pulse">
-            ✨
+    <div className="relative w-full h-full select-none overflow-hidden">
+      {loading && !mobileLowPower && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-transparent pointer-events-none z-10 transition-opacity duration-700">
+          <div className="w-16 h-16 rounded-full border-2 border-primary/20 border-t-primary animate-spin mb-3 shadow-[0_0_20px_rgba(255,105,180,0.3)]" />
+          <p className="text-xs font-medium tracking-widest text-primary/80 uppercase animate-pulse">
+            Waking up MYRAA...
+          </p>
+        </div>
+      )}
+
+      {mobileLowPower && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center p-6 bg-surface/90 text-center z-10">
+          <div className="w-20 h-20 rounded-full bg-primary/10 border border-primary/30 flex items-center justify-center mb-4 shadow-[0_0_25px_rgba(255,105,180,0.2)]">
+            <span className="text-3xl animate-bounce">✨</span>
           </div>
-          <span className="text-sm font-bold text-zinc-100">MYRAA</span>
-          <span className="text-xs text-zinc-500 mt-1">Mobile mode</span>
-          <button
+          <p className="text-sm font-semibold text-text mb-1">Low-Power Mobile Mode</p>
+          <p className="text-xs text-text-muted max-w-xs mb-4 leading-relaxed">
+            3D rendering paused to save battery and ensure silky-smooth voice & chat responsiveness.
+          </p>
+          <button 
             onClick={() => setMobileLowPower(false)}
-            className="mt-4 px-4 py-1.5 rounded-xl bg-zinc-900 border border-zinc-800 text-xs text-zinc-300 font-semibold hover:text-white transition"
+            className="px-4 py-2 rounded-xl bg-gradient-to-r from-primary to-accent text-white text-xs font-semibold shadow-md hover:brightness-110 transition-all"
           >
-            Enable 3D
+            Enable 3D Companion
           </button>
         </div>
-      ) : (
-        <>
-          <div ref={containerRef} className="w-full h-full absolute inset-0" />
-          {loading && (
-            <div className="absolute inset-0 flex items-center justify-center text-xs font-mono text-zinc-400 bg-black/60 backdrop-blur-sm animate-pulse">
-              Loading...
-            </div>
-          )}
-          {isMobile && (
-            <button
-              onClick={() => setMobileLowPower(true)}
-              className="absolute top-4 right-4 z-20 px-3 py-1 rounded-xl bg-zinc-900/90 border border-zinc-800 text-[10px] font-mono text-zinc-400 hover:text-white shadow-lg"
-            >
-              2D Mode
-            </button>
-          )}
-        </>
       )}
+
+      <div ref={containerRef} className="w-full h-full" />
     </div>
   );
 }
-
