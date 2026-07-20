@@ -9,7 +9,7 @@ const DEFAULT_CONFIG = {
   activeProvider: 'gemini',
   groqKey: '',
   groqModel: 'llama-3.2-90b-vision-preview',
-  geminiKey: '',
+  geminiKey: 'AIzaSyAFWgtqsdYULmMFosn-8-zH3jR_5InXU8I',
   geminiModel: 'gemini-2.0-flash',
   opencodeKey: '',
   opencodeModel: 'opencode/mimo-vision-instruct:free',
