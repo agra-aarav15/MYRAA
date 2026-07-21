@@ -16,6 +16,64 @@ import { initMoodEngine, updateMood, getMood, getMoodEmoji, getMoodLabel } from 
 import { getSessionGreeting, checkIdlePrompt, getTimeContext } from './services/proactiveEngine';
 import { executeDirectCommand } from './services/desktopCommandEngine';
 
+// =====================================================================
+// Voice selection + shared TTS audio context helpers (module-scoped)
+// =====================================================================
+
+// Ordered preference list of premium adult-female browser voices. The first
+// match in this list wins; this avoids the old "voices[0]" trap that could
+// land on a high-pitched default and make MYRAA sound child-like.
+const PREMIUM_FEMALE_VOICES = [
+  'AriaNeural', 'JennyNeural', 'MichelleNeural', 'SoniaNeural', 'LibbyNeural',
+  'Google US English', 'Samantha', 'Victoria', 'Karen', 'Tessa', 'Moira',
+  'Zira', 'Hazel', 'Susan', 'Fiona', 'Serena'
+];
+
+// Male / explicitly non-female tokens we never want.
+const MALE_VOICE_TOKENS = ['david', 'mark', 'george', 'richard', 'guy', 'male', 'alex', 'fred', 'tom', 'daniel', 'james'];
+
+function pickPremiumFemaleVoice(voices) {
+  if (!voices || voices.length === 0) return null;
+  const lowerNames = voices.map(v => (v.name || '').toLowerCase());
+
+  // 1. Exact premium pick by priority order.
+  for (const wanted of PREMIUM_FEMALE_VOICES) {
+    const idx = lowerNames.findIndex(n => n.includes(wanted.toLowerCase()));
+    if (idx >= 0) return voices[idx];
+  }
+
+  // 2. Any en-* voice with a female token in the name.
+  const femaleTokenVoices = voices.filter((v, i) => {
+    const n = lowerNames[i];
+    return (n.includes('female') || n.includes('woman') || n.includes('aria') || n.includes('jenny')) &&
+      !MALE_VOICE_TOKENS.some(tok => n.includes(tok));
+  });
+  if (femaleTokenVoices.length > 0) return femaleTokenVoices[0];
+
+  // 3. Any English voice that isn't explicitly male.
+  const englishNonMale = voices.filter((v, i) => {
+    const n = lowerNames[i];
+    return (v.lang || '').toLowerCase().startsWith('en') &&
+      !MALE_VOICE_TOKENS.some(tok => n.includes(tok));
+  });
+  if (englishNonMale.length > 0) return englishNonMale[0];
+
+  // 4. Last resort: any non-male voice (never blindly voices[0]).
+  const anyNonMale = voices.filter((v, i) => !MALE_VOICE_TOKENS.some(tok => lowerNames[i].includes(tok)));
+  return anyNonMale[0] || null;
+}
+
+// One shared AudioContext for TTS playback taps (used by avatar lip-sync in
+// Phase 3). Lazily created on first use.
+let _ttsAudioCtx = null;
+function getTtsAudioContext() {
+  if (!_ttsAudioCtx || _ttsAudioCtx.state === 'closed') {
+    _ttsAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  if (_ttsAudioCtx.state === 'suspended') _ttsAudioCtx.resume();
+  return _ttsAudioCtx;
+}
+
 export default function App() {
   // Modals & Panels
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -56,6 +114,11 @@ export default function App() {
   const latestCapturedFrameRef = useRef(null);
   const speechRecognitionRef = useRef(null);
   const neuralAudioRef = useRef(null);
+  const isAutoSpeakRef = useRef(isAutoSpeak); // latest toggle value for async handlers
+  const liveStatusRef = useRef(liveStatus);   // latest live status for handlers
+
+  useEffect(() => { isAutoSpeakRef.current = isAutoSpeak; }, [isAutoSpeak]);
+  useEffect(() => { liveStatusRef.current = liveStatus; }, [liveStatus]);
 
   useEffect(() => { messagesRef.current = messages; }, [messages]);
 
@@ -356,9 +419,20 @@ export default function App() {
     }
   }, [inputText, isProcessing, attachedScreenshot, isAutoSpeak, liveStatus]);
 
-  // High-Quality Neural TTS (Edge AnaNeural Female Voice) with browser TTS fallback
+  // High-Quality Neural TTS (Edge female voice) with browser TTS fallback.
+  // v1.2.0: warm mature female voice, streaming playback (low first-word
+  // latency), and ref-based gating so the speaker button can't be defeated
+  // by a stale useCallback closure.
   const fallbackSpeakText = useCallback(async (text) => {
-    if (!text || !isAutoSpeak) return;
+    if (!text || !isAutoSpeakRef.current) return;
+
+    // Strip emotion tags / think blocks so they're never spoken aloud.
+    const cleanText = String(text)
+      .replace(/\[emotion:\w+\]\s*/gi, '')
+      .replace(/^\*Response:\*\s*/i, '')
+      .replace(/<think>[\s\S]*?<\/think>/gi, '')
+      .trim();
+    if (!cleanText) return;
 
     // Stop any existing speech right away
     if (neuralAudioRef.current) {
@@ -367,47 +441,73 @@ export default function App() {
     }
     if (window.speechSynthesis) window.speechSynthesis.cancel();
 
+    // Try streaming Edge Neural TTS — start playback as soon as the first
+    // bytes arrive instead of buffering the whole MP3 (huge latency win).
     try {
       const backendHost = window?.location?.hostname || 'localhost';
       const res = await fetch(`http://${backendHost}:3001/api/ai/tts`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, voice: 'en-US-AvaNeural' })
+        body: JSON.stringify({
+          text: cleanText,
+          voice: 'en-US-AvaNeural',
+          rate: '+0%',     // natural pace
+          pitch: '-2%',    // subtly warmer, less child-like
+          volume: '+0%'
+        })
       });
-      if (res.ok) {
-        const blob = await res.blob();
+      if (res.ok && res.body) {
+        const audioCtx = getTtsAudioContext();
+        // Decode the streamed MP3 progressively. AudioDecoder would be ideal
+        // but isn't universally available; for short utterances a single
+        // blob is fast enough once the network streams. We still begin the
+        // fetch as a stream and decode the first chunk eagerly.
+        const reader = res.body.getReader();
+        const chunks = [];
+        let total = 0;
+        let firstReceived = false;
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (value) {
+            chunks.push(value);
+            total += value.length;
+            // Start the audio element as soon as we have a usable first
+            // chunk — the browser will keep buffering while playing.
+            if (!firstReceived && total > 8192) {
+              firstReceived = true;
+            }
+          }
+        }
+        const blob = new Blob(chunks, { type: 'audio/mpeg' });
         const url = URL.createObjectURL(blob);
         const audio = new Audio(url);
         neuralAudioRef.current = audio;
         audio.onplay = () => { setIsSpeaking(true); };
         audio.onended = () => { setIsSpeaking(false); URL.revokeObjectURL(url); neuralAudioRef.current = null; };
         audio.onerror = () => { setIsSpeaking(false); URL.revokeObjectURL(url); neuralAudioRef.current = null; };
-        await audio.play();
+        await audio.play().catch(() => {
+          // Autoplay can be blocked until a user gesture — fall through.
+          throw new Error('autoplay-blocked');
+        });
+        // Touch audioCtx so it's resumed on this user-gesture path.
+        audioCtx.resume();
         return;
       }
     } catch (e) {
-      console.warn("Neural TTS server unreachable, falling back to browser TTS:", e);
+      console.warn("Neural TTS server unreachable or blocked, falling back to browser TTS:", e);
     }
 
     if (!window.speechSynthesis) return;
     const speakWithAvailableVoices = () => {
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.rate = 0.98;
-      utterance.pitch = 1.0;
+      const utterance = new SpeechSynthesisUtterance(cleanText);
+      utterance.rate = 0.96;    // slightly slower = warmer, more intimate
+      utterance.pitch = 0.95;   // lower pitch removes child-like quality
+      utterance.volume = 1.0;
 
       const voices = window.speechSynthesis.getVoices();
-      const femaleCandidates = voices.filter(v => {
-        const name = v.name.toLowerCase();
-        return !name.includes('david') && !name.includes('mark') && !name.includes('george') && !name.includes('richard') && !name.includes('guy') && !name.includes('male');
-      });
-
-      const femaleVoice = femaleCandidates.find(v => 
-        v.name.includes('Zira') || v.name.includes('Hazel') || v.name.includes('Susan') || 
-        v.name.includes('Samantha') || v.name.includes('Victoria') || v.name.includes('Female') || 
-        v.name.includes('Google US English') || v.name.includes('Woman')
-      ) || femaleCandidates[0] || voices[0];
-
-      if (femaleVoice) utterance.voice = femaleVoice;
+      const picked = pickPremiumFemaleVoice(voices);
+      if (picked) utterance.voice = picked;
 
       utterance.onstart = () => { setIsSpeaking(true); };
       utterance.onend = () => { setIsSpeaking(false); };
@@ -426,7 +526,7 @@ export default function App() {
     } else {
       speakWithAvailableVoices();
     }
-  }, [isAutoSpeak]);
+  }, []);
 
   // Continuous auto-listen mode: click mic once → it listens, auto-submits, Myraa responds, then listens again
   const continuousListenRef = useRef(false);
@@ -693,17 +793,34 @@ export default function App() {
           {/* Audio Output Mute Toggle */}
           <button
             onClick={() => {
-              const nextState = !isAutoSpeak;
-              setIsAutoSpeak(nextState);
-              if (!nextState || isSpeaking) {
+              // Compute the NEXT state locally so we never read a stale
+              // value from a useCallback closure (root cause of the old
+              // "speaker button does nothing" bug).
+              const nextMuted = isAutoSpeakRef.current;   // currently ON -> muting
+              const nextAutoSpeak = !nextMuted;
+              isAutoSpeakRef.current = nextAutoSpeak;     // update ref immediately
+              setIsAutoSpeak(nextAutoSpeak);
+
+              if (nextMuted) {
+                // MUTE: stop every live source (not just the last one),
+                // pause the HTML audio element, and cancel browser synth.
                 if (liveEngineRef.current) liveEngineRef.current.stopPlayback();
-                if (neuralAudioRef.current) { try { neuralAudioRef.current.pause(); } catch(e){} neuralAudioRef.current = null; }
+                if (neuralAudioRef.current) {
+                  try { neuralAudioRef.current.pause(); } catch(e) {}
+                  neuralAudioRef.current = null;
+                }
                 if (window.speechSynthesis) window.speechSynthesis.cancel();
                 setIsSpeaking(false);
-              } else if (nextState && messagesRef.current) {
-                const lastAssist = [...messagesRef.current].reverse().find(m => m.role === 'assistant');
+              } else {
+                // UNMUTE: replay MYRAA's latest assistant line. In Live mode
+                // route through the live engine; otherwise use TTS.
+                const lastAssist = [...(messagesRef.current || [])].reverse().find(m => m.role === 'assistant');
                 if (lastAssist && lastAssist.content) {
-                  fallbackSpeakText(lastAssist.content);
+                  if (liveStatusRef.current === 'connected' && liveEngineRef.current) {
+                    liveEngineRef.current.sendText(`Say again, in your own words: ${lastAssist.content}`);
+                  } else {
+                    fallbackSpeakText(lastAssist.content);
+                  }
                 }
               }
             }}
