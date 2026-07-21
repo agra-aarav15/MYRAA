@@ -918,54 +918,99 @@ function simulateResponse(messages) {
 function executeDesktopTool(toolName, args) {
   return new Promise((resolve) => {
     let cmd = '';
+    let humanMessage = ''; // what to tell MYRAA so she can confirm in chat
 
     switch (toolName) {
-      case 'openApplication':
+      case 'openApplication': {
+        // v1.2.0: expanded app map + a much cleaner launch strategy. The
+        // old code nested Start-Process in try/catch incorrectly for UWP
+        // apps and frequently failed silently. We now:
+        //   1. Map known aliases to their real exe / shell:AppsFolder id
+        //   2. For Store apps (ms-settings, calc, mspaint), use explorer.exe
+        //      which resolves shell:AppsFolder correctly on every Win10/11
+        //   3. For regular exes, just Start-Process directly
         const appMap = {
-          notepad: 'notepad.exe', chrome: 'chrome.exe', vscode: 'code', calculator: 'calc.exe',
-          explorer: 'explorer.exe', cmd: 'cmd.exe', powershell: 'powershell.exe', paint: 'mspaint.exe',
-          taskmanager: 'taskmgr.exe', settings: 'ms-settings:'
+          notepad:     { cmd: 'notepad.exe',           label: 'Notepad' },
+          chrome:      { cmd: 'chrome.exe',            label: 'Chrome' },
+          vscode:      { cmd: 'code',                  label: 'VS Code' },
+          code:        { cmd: 'code',                  label: 'VS Code' },
+          explorer:    { cmd: 'explorer.exe',          label: 'File Explorer' },
+          cmd:         { cmd: 'cmd.exe',               label: 'Command Prompt' },
+          terminal:    { cmd: 'wt.exe',                label: 'Terminal' },
+          powershell:  { cmd: 'powershell.exe',        label: 'PowerShell' },
+          taskmanager: { cmd: 'taskmgr.exe',           label: 'Task Manager' },
+          spotify:     { cmd: 'spotify.exe',           label: 'Spotify' },
+          discord:     { cmd: 'discord.exe',           label: 'Discord' },
+          slack:       { cmd: 'slack.exe',             label: 'Slack' },
+          // UWP / Store apps — must go through explorer.exe so shell:AppsFolder resolves
+          calculator:  { cmd: 'calculator:',           label: 'Calculator', uwp: true },
+          calc:        { cmd: 'calculator:',           label: 'Calculator', uwp: true },
+          paint:       { cmd: 'mspaint:',               label: 'Paint',      uwp: true },
+          settings:    { cmd: 'ms-settings:',           label: 'Settings',   uwp: true },
         };
-        const rawName = (args.name || '').toLowerCase().trim();
-        const appCmd = appMap[rawName] || args.name;
-        // Use PowerShell Start-Process to search apps or path reliably
-        cmd = `powershell -NoProfile -Command "try { Start-Process '${appCmd}' -ErrorAction Stop } catch { try { Start-Process 'shell:AppsFolder\\${args.name}' -ErrorAction Stop } catch { start '${args.name}' } }"`;
+        const rawName = String(args.name || '').toLowerCase().trim();
+        const mapped = appMap[rawName];
+        if (mapped) {
+          if (mapped.uwp) {
+            // Explorer handles the UWP protocol/activation reliably.
+            cmd = `explorer.exe "${mapped.cmd}"`;
+          } else {
+            cmd = `powershell -NoProfile -Command "Start-Process '${mapped.cmd}' -ErrorAction Stop"`;
+          }
+          humanMessage = `Opened ${mapped.label}`;
+        } else {
+          // Unmapped: try Start-Process with whatever the user said,
+          // then fall back to explorer so shell:AppsFolder still works.
+          const nameArg = String(args.name || '');
+          cmd = `powershell -NoProfile -Command "try { Start-Process '${nameArg.replace(/'/g, "''")}' -ErrorAction Stop } catch { explorer.exe 'shell:AppsFolder\\\\${nameArg.replace(/'/g, "''")}' }"`;
+          humanMessage = `Tried to open ${nameArg}`;
+        }
         break;
+      }
 
       case 'closeApplication':
-        cmd = `taskkill /IM "${args.name}.exe" /F`;
+        cmd = `taskkill /IM "${String(args.name || '').replace(/"/g, '')}.exe" /F`;
+        humanMessage = `Closed ${args.name}`;
         break;
 
-      case 'openWebsite':
+      case 'openWebsite': {
         const siteMap = {
           youtube: 'https://youtube.com', google: 'https://google.com',
           github: 'https://github.com', gmail: 'https://mail.google.com',
           chatgpt: 'https://chat.openai.com', twitter: 'https://x.com',
-          instagram: 'https://instagram.com',
+          instagram: 'https://instagram.com', reddit: 'https://reddit.com',
+          spotify: 'https://open.spotify.com', linkedin: 'https://linkedin.com',
         };
         const url = siteMap[(args.name || '').toLowerCase()] || args.url || args.name;
         cmd = `powershell -NoProfile -Command "Start-Process '${url}'"`;
+        humanMessage = `Opened ${url}`;
         break;
+      }
 
       case 'searchGoogle':
       case 'searchWeb':
         cmd = `powershell -NoProfile -Command "Start-Process 'https://google.com/search?q=${encodeURIComponent(args.query)}'"`;
+        humanMessage = `Searched Google for "${args.query}"`;
         break;
 
       case 'searchYouTube':
         cmd = `powershell -NoProfile -Command "Start-Process 'https://youtube.com/results?search_query=${encodeURIComponent(args.query)}'"`;
+        humanMessage = `Searched YouTube for "${args.query}"`;
         break;
 
       case 'volumeUp':
         cmd = `powershell -NoProfile -Command "(New-Object -ComObject WScript.Shell).SendKeys([char]175)"`;
+        humanMessage = `Turned the volume up`;
         break;
 
       case 'volumeDown':
         cmd = `powershell -NoProfile -Command "(New-Object -ComObject WScript.Shell).SendKeys([char]174)"`;
+        humanMessage = `Turned the volume down`;
         break;
 
       case 'muteToggle':
         cmd = `powershell -NoProfile -Command "(New-Object -ComObject WScript.Shell).SendKeys([char]173)"`;
+        humanMessage = `Toggled mute`;
         break;
 
       case 'createFile': {
@@ -1011,7 +1056,13 @@ function executeDesktopTool(toolName, args) {
 
     if (cmd) {
       exec(cmd, { timeout: 10000 }, (err, stdout, stderr) => {
-        resolve({ success: !err, output: stdout?.trim(), error: err?.message });
+        resolve({
+          success: !err,
+          message: err ? undefined : humanMessage,
+          output: stdout?.trim() || undefined,
+          error: err?.message,
+          stderr: stderr?.trim() || undefined
+        });
       });
     }
   });
