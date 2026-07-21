@@ -9,8 +9,14 @@ import AvatarCanvas from './components/AvatarCanvas';
 import SettingsModal from './components/SettingsModal';
 import MemoryDashboardModal from './components/MemoryDashboardModal';
 import BrowserAgentModal from './components/BrowserAgentModal';
-import { sendAiChatMessage, cleanAiResponseText, getAiConfig, extractEmotion } from './services/aiProvider';
-import { addCategorizedMemory, getLocalMemories, autoExtractMemoriesFromChat } from './services/memoryStore';
+import { sendAiChatMessage, cleanAiResponseText, getAiConfig, extractEmotion, setMoodContext } from './services/aiProvider';
+import {
+  addCategorizedMemory,
+  getLocalMemories,
+  autoExtractMemoriesFromChat,
+  syncMemoriesFromServer,
+  extractMemoriesFromTranscript
+} from './services/memoryStore';
 import { createLiveVoiceEngine } from './services/liveVoiceEngine';
 import { initMoodEngine, updateMood, getMood, getMoodEmoji, getMoodLabel } from './services/moodEngine';
 import { getSessionGreeting, checkIdlePrompt, getTimeContext } from './services/proactiveEngine';
@@ -101,6 +107,15 @@ export default function App() {
   const [sessionStartTime] = useState(Date.now());
   const [rateLimitStats, setRateLimitStats] = useState(null);
 
+  // Keep the AI prompt context in sync with MYRAA's live mood so her words
+  // actually reflect how she feels (tired/curious/affectionate).
+  const refreshMood = useCallback(() => {
+    const m = getMood();
+    setMood(m);
+    setMoodContext(m);
+    return m;
+  }, []);
+
   // Chat State
   const [messages, setMessages] = useState([]);
   const [inputText, setInputText] = useState('');
@@ -130,11 +145,15 @@ export default function App() {
   }, [messages, isChatPanelOpen]);
 
   // =====================================================================
-  // 1. Initialize Mood & Proactive Greeting
+  // 1. Initialize Mood & Proactive Greeting, sync memory from server
   // =====================================================================
   useEffect(() => {
     initMoodEngine();
-    setMood(getMood());
+    refreshMood();
+
+    // Pull server-side memories (from Live voice sessions) into localStorage
+    // so the AI prompt context sees everything MYRAA has learned across runs.
+    syncMemoriesFromServer().catch(() => {});
 
     // Fetch initial greeting based on time of day & memories
     const memories = getLocalMemories();
@@ -150,7 +169,7 @@ export default function App() {
     ]);
     setAvatarExpression(emotion || 'happy');
     updateMood('session_start');
-    setMood(getMood());
+    refreshMood();
   }, []);
 
   // Proactive Idle Check & Mood Decay timer
@@ -158,7 +177,7 @@ export default function App() {
     const timer = setInterval(() => {
       // Mood decay tick
       updateMood('idle_tick');
-      setMood(getMood());
+      refreshMood();
 
       // Proactive idle check if user has been quiet for over 10 min
       const config = getAiConfig();
@@ -198,13 +217,14 @@ export default function App() {
         setLiveStatus(status);
         if (status === 'connected') {
           updateMood('message_received');
-          setMood(getMood());
+          refreshMood();
         }
       },
       onTranscription: (role, text) => {
         setLastActivityTime(Date.now());
         if (role === 'user') {
           executeDirectCommand(text);
+          autoExtractMemoriesFromChat(text);
           setMessages(prev => [...prev, {
             role: 'user',
             content: text,
@@ -212,7 +232,7 @@ export default function App() {
           }]);
           setAvatarExpression('listening');
           updateMood('message_sent', { text });
-          setMood(getMood());
+          refreshMood();
         } else if (role === 'model') {
           const { text: cleanText, emotion } = extractEmotion(text);
           executeDirectCommand(cleanText);
@@ -233,7 +253,7 @@ export default function App() {
           });
           if (emotion) setAvatarExpression(emotion);
           updateMood('message_received', { text: cleanText });
-          setMood(getMood());
+          refreshMood();
         }
       },
       onSpeakingChange: (speaking) => {
@@ -247,6 +267,8 @@ export default function App() {
       },
       onMemorySync: (updatedMemories) => {
         console.log('[App] Memory sync received from backend:', updatedMemories.length);
+        // Server-side memory pipeline updated memories.json — re-sync local.
+        syncMemoriesFromServer(true).catch(() => {});
       },
       onToolResult: (tool, result) => {
         console.log(`[App] Tool executed: ${tool}`, result);
@@ -257,6 +279,13 @@ export default function App() {
       onTurnComplete: () => {
         setMessages(prev => prev.map(m => m.isStreaming ? { ...m, isStreaming: false } : m));
         setAvatarExpression('happy');
+        // v1.2.0: now that the Live turn's transcription is fully in messages,
+        // run AI-driven memory extraction over the recent transcript so
+        // memories learned during voice mode persist (was Live-only before).
+        const lastFew = (messagesRef.current || []).slice(-6);
+        if (lastFew.length >= 2) {
+          extractMemoriesFromTranscript(lastFew).catch(() => {});
+        }
       },
       onInterrupted: () => {
         setIsSpeaking(false);
@@ -349,12 +378,22 @@ export default function App() {
     executeDirectCommand(textToSend);
     autoExtractMemoriesFromChat(textToSend);
 
+    // Topic-based mood events (never fired before — focus/curiosity stayed flat).
+    const lower = textToSend.toLowerCase();
+    if (/\b(code|bug|api|server|deploy|bugfix|refactor|typescript|react|vite)\b/.test(lower)) {
+      updateMood('work_topic', { text: textToSend });
+    } else if (/\b(feel|love|miss|tired|stressed|how are you|about you|us)\b/.test(lower)) {
+      updateMood('personal_topic', { text: textToSend });
+    } else if (/\b(interesting|new|curious|wonder|what if|have you heard)\b/.test(lower)) {
+      updateMood('new_interest', { text: textToSend });
+    }
+
     const screenToUse = screenshot || attachedScreenshot || (isContinuousVision ? latestCapturedFrameRef.current : null);
     setLastActivityTime(Date.now());
 
-    // Update mood for user interaction
+    // Update mood for user interaction + push to AI prompt context.
     updateMood('message_sent', { text: textToSend });
-    setMood(getMood());
+    refreshMood();
 
     // If connected to Gemini Live WebSocket, send via WebSocket
     if (liveEngineRef.current && liveStatus === 'connected') {
@@ -371,6 +410,13 @@ export default function App() {
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       }]);
       setAvatarExpression('thinking');
+      // v1.2.0: Live mode now ALSO extracts memories (was skipped before).
+      // Fire on the next tick so we don't delay the WS send.
+      setMessages(prev => {
+        const lastFew = [...prev, { role: 'user', content: textToSend }].slice(-6);
+        extractMemoriesFromTranscript(lastFew).catch(() => {});
+        return prev;
+      });
       return;
     }
 
@@ -401,12 +447,20 @@ export default function App() {
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       }]);
 
-      if (isAutoSpeak) {
+      if (isAutoSpeakRef.current) {
         fallbackSpeakText(sanitizedReply);
       }
       setAvatarExpression(emotion || 'happy');
       updateMood('message_received', { text: sanitizedReply });
-      setMood(getMood());
+      refreshMood();
+
+      // v1.2.0: AI-driven memory extraction over recent turns (regex fallback
+      // already fired above; the AI call covers anything it missed).
+      setMessages(prev => {
+        const lastFew = [...prev].slice(-6);
+        extractMemoriesFromTranscript(lastFew).catch(() => {});
+        return prev;
+      });
     } catch (err) {
       setMessages(prev => [...prev, {
         role: 'assistant',
@@ -417,7 +471,7 @@ export default function App() {
     } finally {
       setIsProcessing(false);
     }
-  }, [inputText, isProcessing, attachedScreenshot, isAutoSpeak, liveStatus]);
+  }, [inputText, isProcessing, attachedScreenshot, liveStatus]);
 
   // High-Quality Neural TTS (Edge female voice) with browser TTS fallback.
   // v1.2.0: warm mature female voice, streaming playback (low first-word
