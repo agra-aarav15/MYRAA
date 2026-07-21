@@ -443,14 +443,32 @@ app.get('/api/memory/all', (req, res) => {
 
 app.post('/api/memory/add', (req, res) => {
   try {
-    const { category = 'identity', text } = req.body;
+    const { id, category = 'identity', text, source, confidence } = req.body;
     if (!text?.trim()) return res.status(400).json({ error: 'Text required' });
 
     const memories = loadMemories();
+
+    // If an id was supplied and already exists, treat this as an UPDATE
+    // (merge semantics) so the client's update/merge logic round-trips.
+    if (id) {
+      const existing = memories.find(m => m.id === id);
+      if (existing) {
+        existing.text = text.trim();
+        existing.category = category || existing.category;
+        if (source !== undefined) existing.source = source;
+        if (confidence !== undefined) existing.confidence = confidence;
+        existing.updatedAt = new Date().toISOString();
+        saveMemories(memories);
+        return res.json({ success: true, memory: existing, memories });
+      }
+    }
+
     const newMem = {
-      id: `mem_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+      id: id || `mem_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
       category, text: text.trim(),
-      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      source: source || 'chat',
+      confidence: typeof confidence === 'number' ? confidence : 0.7
     };
     memories.push(newMem);
     saveMemories(memories);
@@ -465,6 +483,115 @@ app.post('/api/memory/delete', (req, res) => {
     saveMemories(memories);
     res.json({ success: true, memories });
   } catch (err) { res.status(500).json({ error: 'Failed to delete' }); }
+});
+
+// =====================================================================
+// AI-driven memory extraction endpoint (v1.2.0)
+// Sends the transcript to a cheap Gemini call that pulls out durable
+// facts in any phrasing (not just regex-triggered patterns). Falls back
+// gracefully if no Gemini key is configured.
+// =====================================================================
+const MEMORY_EXTRACTION_PROMPT = `You are a memory extraction engine for MYRAA, an AI girlfriend companion. Given the conversation transcript below between Aarav (the user) and MYRAA, extract DURABLE facts worth remembering about Aarav that a partner would genuinely want to know.
+
+Only extract facts that are:
+- About Aarav himself (not MYRAA)
+- Durable (would still be true/interesting days or weeks later)
+- Specific enough to be useful (no vague statements)
+
+For each fact, choose ONE category from: identity, preference, goal, project, relationship, emotional, behavior.
+
+Respond ONLY with a JSON array. If nothing worth remembering, respond with [].
+Format: [{"category":"preference","text":"Aarav enjoys lo-fi music while coding.","confidence":0.8}]
+
+Keep each extracted text concise (under 120 chars) and written as a direct factual statement about Aarav (e.g. "Aarav likes..." not "He said he likes...").
+
+Transcript:
+`;
+
+app.post('/api/memory/extract', async (req, res) => {
+  const { transcript } = req.body || {};
+  if (!transcript || typeof transcript !== 'string' || transcript.trim().length < 5) {
+    return res.json({ memories: [] });
+  }
+
+  const apiKey = getApiKey('gemini');
+  if (!apiKey) {
+    // No Gemini key — client will fall back to the regex extractor.
+    return res.status(503).json({ error: 'No Gemini API key for extraction', memories: [] });
+  }
+
+  if (!canMakeRequest()) {
+    return res.status(429).json({ error: 'Rate limited', memories: [] });
+  }
+
+  try {
+    const model = 'gemini-2.0-flash-lite'; // cheap, fast — perfect for extraction
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+    const payload = {
+      contents: [{
+        role: 'user',
+        parts: [{ text: MEMORY_EXTRACTION_PROMPT + transcript.slice(-4000) }]
+      }],
+      generationConfig: { temperature: 0.2, maxOutputTokens: 600 }
+    };
+
+    trackRequest();
+    const aiRes = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await aiRes.json();
+    if (!aiRes.ok) {
+      return res.status(502).json({ error: data?.error?.message || 'Extraction failed', memories: [] });
+    }
+
+    const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || '[]';
+    // The model is instructed to return a JSON array; parse defensively.
+    let memories = [];
+    try {
+      // Strip any markdown code fences or prose around the JSON.
+      const jsonStart = raw.indexOf('[');
+      const jsonEnd = raw.lastIndexOf(']');
+      if (jsonStart >= 0 && jsonEnd > jsonStart) {
+        memories = JSON.parse(raw.slice(jsonStart, jsonEnd + 1));
+      }
+    } catch (e) {
+      console.warn('[Memory Extract] Failed to parse AI output:', e.message);
+    }
+
+    // Validate shape & categories, persist to memories.json.
+    const validCategories = new Set(Object.keys({
+      identity: 1, preference: 1, goal: 1, project: 1, relationship: 1, emotional: 1, behavior: 1
+    }));
+    const cleaned = (Array.isArray(memories) ? memories : [])
+      .filter(m => m && m.category && validCategories.has(String(m.category)) && m.text && String(m.text).trim())
+      .map(m => ({
+        category: String(m.category),
+        text: String(m.text).trim().slice(0, 200),
+        confidence: typeof m.confidence === 'number' ? Math.min(1, Math.max(0, m.confidence)) : 0.75
+      }));
+
+    // Persist each extracted memory.
+    for (const m of cleaned) {
+      const existing = loadMemories();
+      existing.push({
+        id: `mem_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+        category: m.category,
+        text: m.text,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        source: 'ai',
+        confidence: m.confidence
+      });
+      saveMemories(existing);
+    }
+
+    res.json({ memories: cleaned });
+  } catch (err) {
+    console.error('[Memory Extract] error:', err.message);
+    res.status(500).json({ error: err.message, memories: [] });
+  }
 });
 
 // Session state endpoint for proactive engine
