@@ -700,6 +700,11 @@ export default function App() {
                 if (neuralAudioRef.current) { try { neuralAudioRef.current.pause(); } catch(e){} neuralAudioRef.current = null; }
                 if (window.speechSynthesis) window.speechSynthesis.cancel();
                 setIsSpeaking(false);
+              } else if (nextState && messagesRef.current) {
+                const lastAssist = [...messagesRef.current].reverse().find(m => m.role === 'assistant');
+                if (lastAssist && lastAssist.content) {
+                  fallbackSpeakText(lastAssist.content);
+                }
               }
             }}
             className={`p-2.5 rounded-xl transition ${

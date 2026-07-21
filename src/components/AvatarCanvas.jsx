@@ -468,11 +468,24 @@ export default function AvatarCanvas({
         bones.rightArm.rotation.z = lerp(bones.rightArm.rotation.z, (bones.rightArm.userData.restRotation?.z || 0.15) + poseState.rightArm.z, 0.05);
       }
 
-      // --- 5. IDLE MICRO-SWAY ---
+      // --- 5. IDLE HUMAN MICRO-SWAY & WEIGHT SHIFTING ---
       const excitedSway = expr === 'excited' ? Math.sin(t * swaySpeed * 2) * 0.02 : 0;
-      const idleY = Math.sin(t * swaySpeed) * 0.006 + excitedSway;
+      const idleY = Math.sin(t * swaySpeed) * 0.008 + excitedSway;
+      const weightShiftZ = Math.sin(t * 0.45) * 0.022; // Side-to-side hip weight shift
+      const weightShiftY = Math.cos(t * 0.3) * 0.014;  // Gentle hip rotation
       if (bones.hips) {
-        bones.hips.rotation.y = lerp(bones.hips.rotation.y || 0, idleY, 0.03);
+        bones.hips.rotation.y = lerp(bones.hips.rotation.y || 0, idleY + weightShiftY, 0.04);
+        bones.hips.rotation.z = lerp(bones.hips.rotation.z || 0, weightShiftZ, 0.04);
+      }
+
+      // Wrist & hand micro-fidgets while standing still
+      const wristFidgetL = Math.sin(t * 0.6 + 1.2) * 0.03;
+      const wristFidgetR = Math.cos(t * 0.6 + 2.1) * 0.03;
+      if (bones.leftWrist && !isSpeakingActive) {
+        bones.leftWrist.rotation.z = lerp(bones.leftWrist.rotation.z || 0, (bones.leftWrist.userData.restRotation?.z || 0) + wristFidgetL, 0.04);
+      }
+      if (bones.rightWrist && !isSpeakingActive) {
+        bones.rightWrist.rotation.z = lerp(bones.rightWrist.rotation.z || 0, (bones.rightWrist.userData.restRotation?.z || 0) + wristFidgetR, 0.04);
       }
 
       // --- 6. HAIR PHYSICS ---
