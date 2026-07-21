@@ -99,6 +99,7 @@ export default function App() {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isAutoSpeak, setIsAutoSpeak] = useState(true);
   const [isHeaderCollapsed, setIsHeaderCollapsed] = useState(false);
+  const [avatarAnalyser, setAvatarAnalyser] = useState(null); // AnalyserNode driving real lip-sync
 
   // Companion & Mood State
   const [mood, setMood] = useState(getMood());
@@ -300,8 +301,21 @@ export default function App() {
     setLiveEngine(engine);
     liveEngineRef.current = engine;
 
+    // Tap the engine's analyser for avatar lip-sync. The engine builds the
+    // AnalyserNode lazily inside initAudioContext() (on first audio frame),
+    // so poll briefly until it exists, then hand it to AvatarCanvas.
+    const analyserPoll = setInterval(() => {
+      const an = engine.getAnalyser && engine.getAnalyser();
+      if (an) {
+        setAvatarAnalyser(an);
+        clearInterval(analyserPoll);
+      }
+    }, 500);
+    setTimeout(() => clearInterval(analyserPoll), 10000); // cap polling
+
     return () => {
       engine.disconnect();
+      clearInterval(analyserPoll);
     };
   }, []);
 
@@ -544,6 +558,25 @@ export default function App() {
           // Autoplay can be blocked until a user gesture — fall through.
           throw new Error('autoplay-blocked');
         });
+        // Tap the audio element so the avatar can drive lip-sync from it.
+        // Use a lazy cached MediaElementSource per element (you can't create
+        // two sources on the same element).
+        try {
+          if (!audio._myraaSource) {
+            const src = audioCtx.createMediaElementSource(audio);
+            const an = audioCtx.createAnalyser();
+            an.fftSize = 512;
+            an.smoothingTimeConstant = 0.6;
+            src.connect(an);
+            an.connect(audioCtx.destination);
+            audio._myraaSource = src;
+            audio._myraaAnalyser = an;
+          }
+          setAvatarAnalyser(audio._myraaAnalyser);
+        } catch (e) {
+          // Some hosts disallow MediaElementSource on cross-origin audio;
+          // silent fallback keeps speech working without analyser-driven lips.
+        }
         // Touch audioCtx so it's resumed on this user-gesture path.
         audioCtx.resume();
         return;
@@ -809,6 +842,7 @@ export default function App() {
           expression={avatarExpression}
           isSpeaking={isSpeaking}
           mood={mood}
+          audioAnalyser={avatarAnalyser}
         />
       </main>
 

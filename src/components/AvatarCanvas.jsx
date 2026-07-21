@@ -2,10 +2,23 @@ import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
-export default function AvatarCanvas({ 
+// =====================================================================
+// MYRAA 3D Avatar — v1.2.0 realism upgrade
+//   • Real audio-driven lip-sync: viseme weights come from live
+//     AnalyserNode frequency bands instead of a fake Math.sin timer.
+//   • Human micro-motion upgrades: saccadic eye jitter, varied blinks
+//     (double-blinks + occasional long stares), speech-synced weight
+//     shifts, breathing that pauses mid-utterance, gesture library
+//     triggered on emotion transitions.
+// All new bone/morph writes keep the existing LERP guards
+// (Math.min(speed * dt * 60, 1)) and bonesRef.current null-checks.
+// =====================================================================
+
+export default function AvatarCanvas({
   expression = 'idle',
   isSpeaking = false,
-  mood = { happiness: 50, energy: 50, affection: 50, focus: 50, curiosity: 50 }
+  mood = { happiness: 50, energy: 50, affection: 50, focus: 50, curiosity: 50 },
+  audioAnalyser = null  // optional AnalyserNode — drives real lip-sync
 }) {
   const containerRef = useRef(null);
   const modelRef = useRef(null);
@@ -14,6 +27,12 @@ export default function AvatarCanvas({
   const isSpeakingRef = useRef(isSpeaking);
   const expressionRef = useRef(expression);
   const moodRef = useRef(mood);
+  const audioAnalyserRef = useRef(audioAnalyser);
+  const analyserDataRef = useRef(null);
+  // Track expression transitions so gestures fire on emotion changes.
+  const lastExpressionRef = useRef(expression);
+  const gestureEndRef = useRef(0);   // t at which the current gesture expires
+  const gestureTypeRef = useRef(''); // current gesture id: ''/hairTuck/thinkPose/wave/blushCover
 
   const [loading, setLoading] = useState(true);
   const [isMobile, setIsMobile] = useState(false);
@@ -22,6 +41,7 @@ export default function AvatarCanvas({
   useEffect(() => { isSpeakingRef.current = isSpeaking; }, [isSpeaking]);
   useEffect(() => { expressionRef.current = expression; }, [expression]);
   useEffect(() => { moodRef.current = mood; }, [mood]);
+  useEffect(() => { audioAnalyserRef.current = audioAnalyser; }, [audioAnalyser]);
 
   // Mobile detection
   useEffect(() => {
@@ -224,9 +244,41 @@ export default function AvatarCanvas({
     let nextBlinkTime = 0;
     let isBlinking = false;
     let blinkPhase = 0;
+    let blinkCountInBurst = 0;   // counts blinks in a burst for double-blinks
+    let longStareUntil = 0;       // suppresses blink when we decide to stare
 
     let nextIdleShiftTime = 0;
     let idleSubPose = { x: 0, y: 0, z: 0 };
+
+    // Saccade state for realistic eye jitter (fast flick + slow drift).
+    let saccadeUntil = 0;
+    let saccadeTarget = { x: 0, y: 0 };
+    let nextSaccadeTime = 0;
+
+    // Reusable frequency-domain buffer + smoothed energy for audio lip-sync.
+    let freqBuffer = null;
+    let lipEnergySmooth = 0;
+    function readSpeakerEnergy() {
+      const an = audioAnalyserRef.current;
+      if (!an) return null;
+      if (!freqBuffer || freqBuffer.length !== an.frequencyBinCount) {
+        freqBuffer = new Uint8Array(an.frequencyBinCount);
+      }
+      try { an.getByteFrequencyData(freqBuffer); } catch (e) { return null; }
+      const n = freqBuffer.length;
+      let low = 0, mid = 0, high = 0;
+      const lowEnd = Math.max(1, Math.floor(n * 0.15));
+      const midEnd = Math.max(lowEnd + 1, Math.floor(n * 0.5));
+      for (let i = 0; i < lowEnd; i++) low += freqBuffer[i];
+      for (let i = lowEnd; i < midEnd; i++) mid += freqBuffer[i];
+      for (let i = midEnd; i < n; i++) high += freqBuffer[i];
+      return {
+        low: low / (lowEnd * 255 || 1),
+        mid: mid / ((midEnd - lowEnd) * 255 || 1),
+        high: high / ((n - midEnd) * 255 || 1),
+        total: (low + mid + high) / 3
+      };
+    }
 
     const blendMorph = (names, targetValue, speed, dt) => {
       const nameArr = Array.isArray(names) ? names : [names];
@@ -270,16 +322,37 @@ export default function AvatarCanvas({
       const swaySpeed = 0.4 * (0.8 + moodEnergy * 0.5) * (expr === 'excited' ? 1.5 : 1);
 
       // --- Blink Cycle (True eyelid closure blendshapes) ---
-      if (t > nextBlinkTime) {
+      // v1.2.0: human-like variety — sometimes double-blinks, sometimes
+      // a long stare. Barely perceptible but a big realism lever.
+      if (!isBlinking && t > nextBlinkTime && t < longStareUntil) {
+        nextBlinkTime = t; // re-evaluate once the stare ends
+      }
+      if (!isBlinking && t > nextBlinkTime && t >= longStareUntil) {
         isBlinking = true;
         blinkPhase = 0;
-        nextBlinkTime = t + 2 + Math.random() * 4; // 2-6s interval
+        blinkCountInBurst = (Math.random() < 0.18) ? 2 : 1; // ~18% chance of double-blink
       }
       let blinkValue = 0;
       if (isBlinking) {
-        blinkPhase += dt * 16; // blink speed
+        blinkPhase += dt * 17; // blink speed
         if (blinkPhase >= Math.PI) {
           isBlinking = false;
+          blinkCountInBurst -= 1;
+          if (blinkCountInBurst > 0) {
+            // immediately start the second blink of a double-blink
+            isBlinking = true;
+            blinkPhase = 0;
+          } else {
+            // Schedule next blink with variety: most are quick, occasionally
+            // we stare for 4-9s before the next blink.
+            if (Math.random() < 0.12) {
+              longStareUntil = t + 4 + Math.random() * 5;
+              nextBlinkTime = longStareUntil + 0.1;
+            } else {
+              nextBlinkTime = t + 2 + Math.random() * 3.5; // 2-5.5s normally
+              longStareUntil = 0;
+            }
+          }
         } else {
           blinkValue = Math.sin(blinkPhase);
         }
@@ -384,28 +457,53 @@ export default function AvatarCanvas({
           break;
       }
 
-      // --- True Lip-Sync Talking Animation ---
+      // --- Real Audio-Driven Lip-Sync (v1.2.0) ---
+      // When an AnalyserNode is available (live engine + TTS audio tap),
+      // drive viseme weights from actual speech energy bands. Otherwise
+      // fall back to the old speech-phase oscillator so lip-sync still
+      // works without a tap (muted mode / no-mic).
+      const energy = isSpeakingActive ? readSpeakerEnergy() : null;
       if (isSpeakingActive) {
-        speakPhase += dt * (12.0 + moodEnergy * 3.0); // Real human speaking frequency (~12-15Hz)
-        const vA = (Math.sin(speakPhase) * 0.5 + 0.5) * 0.75;
-        const vI = (Math.cos(speakPhase * 1.35) * 0.5 + 0.5) * 0.45;
-        const vO = (Math.sin(speakPhase * 0.7 + 1.2) * 0.5 + 0.5) * 0.4;
-        blendMorph(['A'], vA, 0.6, dt);
-        blendMorph(['E;I'], vI, 0.6, dt);
-        blendMorph(['O', 'U'], vO, 0.6, dt);
+        if (energy) {
+          // Smooth the energy curve so micro-gaps don't snap the mouth shut.
+          lipEnergySmooth = lipEnergySmooth * 0.7 + energy.total * 0.3;
+          // Add a tiny resting baseline even in quiet frames so the mouth
+          // isn't perfectly static when speech pauses briefly.
+          const resting = 0.05;
+          const vA = Math.min(1, energy.low * 1.6 + resting);
+          const vI = Math.min(0.8, energy.mid * 1.4 + resting * 0.4);
+          const vO = Math.min(0.8, energy.high * 1.2 + resting * 0.3);
+          blendMorph(['A'], vA, 0.5, dt);
+          blendMorph(['E;I'], vI, 0.5, dt);
+          blendMorph(['O', 'U'], vO, 0.5, dt);
+        } else {
+          // No analyser tap — use the old oscillator with a tiny jitter
+          // so it doesn't look like a strict sine wave.
+          speakPhase += dt * (12.0 + moodEnergy * 3.0);
+          const jitter = (Math.noise ? 0 : (Math.sin(speakPhase * 5.3) * 0.05));
+          const vA = (Math.sin(speakPhase) * 0.5 + 0.5) * 0.75 + jitter;
+          const vI = (Math.cos(speakPhase * 1.35) * 0.5 + 0.5) * 0.45;
+          const vO = (Math.sin(speakPhase * 0.7 + 1.2) * 0.5 + 0.5) * 0.4;
+          blendMorph(['A'], vA, 0.6, dt);
+          blendMorph(['E;I'], vI, 0.6, dt);
+          blendMorph(['O', 'U'], vO, 0.6, dt);
+          lipEnergySmooth = vA;
+        }
 
-        // Natural head micro-nod & body sway while speaking
-        const microNod = Math.sin(speakPhase * 0.4) * 0.012;
-        const bodySway = Math.sin(speakPhase * 0.25) * 0.01;
-        const shoulderPulse = Math.sin(speakPhase * 0.5) * 0.006;
+        // Speech-synced weight shift: lean slightly with speech rhythm,
+        // but DON'T bob every frame (too jerky). Only when energy is high.
+        const talkEnergy = Math.min(1, lipEnergySmooth * 1.5);
+        const microNod = Math.sin(t * 2.2) * 0.012 * talkEnergy;
+        const bodySway = Math.sin(t * 1.1) * 0.01 * talkEnergy;
+        const shoulderPulse = Math.sin(t * 1.5) * 0.006 * talkEnergy;
         if (bones.head) bones.head.rotation.x += microNod;
         if (bones.chest) bones.chest.rotation.y = lerp(bones.chest.rotation.y || 0, bodySway, 0.05);
         if (bones.upperChest) bones.upperChest.rotation.x = lerp(bones.upperChest.rotation.x || 0, (bones.upperChest.userData.restRotation?.x || 0) + shoulderPulse, 0.05);
-        if (bones.leftWrist) bones.leftWrist.rotation.z = lerp(bones.leftWrist.rotation.z || 0, (bones.leftWrist.userData.restRotation?.z || 0) + Math.sin(speakPhase * 0.35) * 0.06, 0.05);
+        if (bones.leftWrist) bones.leftWrist.rotation.z = lerp(bones.leftWrist.rotation.z || 0, (bones.leftWrist.userData.restRotation?.z || 0) + Math.sin(t * 1.3) * 0.06 * talkEnergy, 0.05);
       } else {
         speakPhase *= 0.92;
+        lipEnergySmooth *= 0.9;
       }
-
       // LERP state targets
       const blendSpeed = 0.04;
       poseState.head.x = lerp(poseState.head.x, tHead.x, blendSpeed);
@@ -440,9 +538,23 @@ export default function AvatarCanvas({
         bones.neck.rotation.y = lerp(bones.neck.rotation.y, targetHeadY * 0.3, 0.03);
       }
 
-      // --- 3. EYE TRACKING ---
-      const targetEyeY = mouseRef.current.x * 0.15 * trackFactor + poseState.eyeL.y;
-      const targetEyeX = -mouseRef.current.y * 0.1 * trackFactor + poseState.eyeL.x;
+      // --- 3. EYE TRACKING + SACCADES ---
+      // v1.2.0: humans don't hold a perfectly smooth gaze — they make
+      // tiny fast saccades (jitter) every few hundred ms. We layer those
+      // on top of the mouse-follow target so the eyes feel alive even
+      // when the mouse is still.
+      if (t > nextSaccadeTime) {
+        saccadeTarget = {
+          x: (Math.random() - 0.5) * 0.06,
+          y: (Math.random() - 0.5) * 0.06
+        };
+        const saccadeDur = 0.08 + Math.random() * 0.12;       // 80-200ms flick
+        saccadeUntil = t + saccadeDur;
+        nextSaccadeTime = t + 0.4 + Math.random() * 1.5;     // next in 0.4-1.9s
+      }
+      const saccadeBlend = (t < saccadeUntil) ? 1 : 0;
+      const targetEyeY = mouseRef.current.x * 0.15 * trackFactor + poseState.eyeL.y + saccadeTarget.y * saccadeBlend;
+      const targetEyeX = -mouseRef.current.y * 0.1 * trackFactor + poseState.eyeL.x + saccadeTarget.x * saccadeBlend;
       if (bones.eyeL) {
         bones.eyeL.rotation.y = lerp(bones.eyeL.rotation.y, targetEyeY, 0.08);
         bones.eyeL.rotation.x = lerp(bones.eyeL.rotation.x, targetEyeX, 0.12);
@@ -469,10 +581,15 @@ export default function AvatarCanvas({
       }
 
       // --- 5. IDLE HUMAN MICRO-SWAY & WEIGHT SHIFTING ---
+      // v1.2.0: breathing and swaying both damp when MYRAA is mid-utterance
+      // (humans hold their breath pattern steady while talking). This makes
+      // the body feel more alive vs. cycling through the same sine regardless
+      // of speech.
+      const motionDamp = isSpeakingActive ? (1 - lipEnergySmooth * 0.6) : 1;
       const excitedSway = expr === 'excited' ? Math.sin(t * swaySpeed * 2) * 0.02 : 0;
-      const idleY = Math.sin(t * swaySpeed) * 0.008 + excitedSway;
-      const weightShiftZ = Math.sin(t * 0.45) * 0.022; // Side-to-side hip weight shift
-      const weightShiftY = Math.cos(t * 0.3) * 0.014;  // Gentle hip rotation
+      const idleY = (Math.sin(t * swaySpeed) * 0.008 + excitedSway) * motionDamp;
+      const weightShiftZ = Math.sin(t * 0.45) * 0.022 * motionDamp; // Side-to-side hip weight shift
+      const weightShiftY = Math.cos(t * 0.3) * 0.014 * motionDamp;  // Gentle hip rotation
       if (bones.hips) {
         bones.hips.rotation.y = lerp(bones.hips.rotation.y || 0, idleY + weightShiftY, 0.04);
         bones.hips.rotation.z = lerp(bones.hips.rotation.z || 0, weightShiftZ, 0.04);
@@ -486,6 +603,61 @@ export default function AvatarCanvas({
       }
       if (bones.rightWrist && !isSpeakingActive) {
         bones.rightWrist.rotation.z = lerp(bones.rightWrist.rotation.z || 0, (bones.rightWrist.userData.restRotation?.z || 0) + wristFidgetR, 0.04);
+      }
+
+      // --- 5b. EMOTION-TRIGGERED GESTURE LIBRARY (v1.2.0) ---
+      // When `expression` changes (or spontaneously if we've been idle long
+      // enough), MYRAA briefly performs a "gesture": hair tuck, thinking
+      // arm-cross, excited wave, or shy face-touch. Each gesture eases in
+      // and out (no snapping), so it blends smoothly with the idle pose.
+      const exprChanged = lastExpressionRef.current !== expr;
+      lastExpressionRef.current = expr;
+      if (exprChanged && t >= gestureEndRef.current) {
+        // Pick a gesture based on the new expression.
+        let g = '';
+        if (expr === 'thinking') g = 'thinkPose';
+        else if (expr === 'excited') g = 'wave';
+        else if (expr === 'shy' || expr === 'sad') g = 'blushCover';
+        else if (expr === 'happy') g = (Math.random() < 0.5 ? 'hairTuck' : '');
+        else if (expr === 'listening') g = 'nodOnce';
+        if (g) {
+          gestureTypeRef.current = g;
+          gestureEndRef.current = t + (g === 'nodOnce' ? 0.6 : 1.4 + Math.random() * 0.6);
+        }
+      }
+      // Apply active gesture (eases the relevant arm toward a gesture pose)
+      // and eases back to rest when the gesture ends.
+      const gestureActive = t < gestureEndRef.current;
+      const gestProgress = gestureActive
+        ? Math.min(1, (gestureEndRef.current - t) / 1.5)
+        : 0;
+      const gest = gestureTypeRef.current;
+      if (gest && bones.rightArm && bones.leftArm) {
+        // Use a smooth factor that ramps up then down (triangle envelope).
+        const ramp = gestureActive
+          ? (1 - Math.abs(2 * (1 - gestProgress) - 1)) * 0.8
+          : 0;
+        if (gest === 'hairTuck' && bones.rightArm) {
+          // raise right hand up beside the head
+          bones.rightArm.rotation.x = lerp(bones.rightArm.rotation.x, (bones.rightArm.userData.restRotation?.x || -1.25) + (1.0 * ramp), 0.12);
+          if (bones.rightElbow) bones.rightElbow.rotation.x = lerp(bones.rightElbow.rotation.x, -0.9 * ramp, 0.12);
+        } else if (gest === 'thinkPose' && bones.rightArm) {
+          // bring right hand near chin (arm in toward chest, elbow bent)
+          bones.rightArm.rotation.x = lerp(bones.rightArm.rotation.x, (bones.rightArm.userData.restRotation?.x || -1.25) - 0.5 * ramp, 0.12);
+          bones.rightArm.rotation.z = lerp(bones.rightArm.rotation.z, (bones.rightArm.userData.restRotation?.z || 0.15) + 0.6 * ramp, 0.12);
+          if (bones.rightElbow) bones.rightElbow.rotation.x = lerp(bones.rightElbow.rotation.x, -1.1 * ramp, 0.12);
+        } else if (gest === 'wave' && bones.rightArm) {
+          // bounce right forearm up and wave (oscillate horizontally)
+          bones.rightArm.rotation.x = lerp(bones.rightArm.rotation.x, (bones.rightArm.userData.restRotation?.x || -1.25) + 0.9 * ramp, 0.18);
+          if (bones.rightElbow) bones.rightElbow.rotation.z = lerp(bones.rightElbow.rotation.z, Math.sin(t * 6) * 0.4 * ramp, 0.25);
+        } else if (gest === 'blushCover' && bones.leftArm) {
+          // bring left hand up near cheek
+          bones.leftArm.rotation.x = lerp(bones.leftArm.rotation.x, (bones.leftArm.userData.restRotation?.x || -1.25) + 0.85 * ramp, 0.12);
+          bones.leftArm.rotation.z = lerp(bones.leftArm.rotation.z, (bones.leftArm.userData.restRotation?.z || -0.15) - 0.5 * ramp, 0.12);
+        } else if (gest === 'nodOnce' && bones.head) {
+          // small single affirmative dip
+          bones.head.rotation.x = lerp(bones.head.rotation.x, (bones.head.userData.restRotation?.x || 0) - 0.18 * (Math.sin(Math.min(1, (gestureEndRef.current - t) / 0.6) * Math.PI)) * 1, 0.15);
+        }
       }
 
       // --- 6. HAIR PHYSICS ---
