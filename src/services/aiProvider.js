@@ -1,20 +1,25 @@
 // =====================================================================
-// MYRAA AI Provider Service — Enhanced with Emotion Detection,
-// Time-Awareness, and Deep Girlfriend Personality
+// MYRAA AI Provider Service — v1.2.0
+// Enhanced with: real provider fallback chain, mood-aware persona,
+// few-shot variety library, emotion detection, time-awareness, and
+// settings.json-backed API keys (no hardcoded keys in the bundle).
 // =====================================================================
 
 const STORAGE_KEY = 'MYRAA_AI_CONFIG';
 
 const DEFAULT_CONFIG = {
   activeProvider: 'gemini',
+  // Keys are intentionally empty here — they live in server-side
+  // settings.json (gitignored) and are injected by /api/ai/proxy via
+  // the getApiKey() helper. The client never ships keys in the bundle.
   groqKey: '',
-  groqModel: 'llama-3.2-90b-vision-preview',
-  geminiKey: 'AIzaSyAFWgtqsdYULmMFosn-8-zH3jR_5InXU8I',
+  groqModel: 'llama-3.3-70b-versatile',
+  geminiKey: '',
   geminiModel: 'gemini-2.0-flash',
   opencodeKey: '',
   opencodeModel: 'opencode/mimo-vision-instruct:free',
   openrouterKey: '',
-  openrouterModel: 'google/gemini-2.0-flash-lite-001',
+  openrouterModel: 'google/gemini-2.0-flash-001',
   customUrl: 'http://localhost:11434/v1',
   customKey: '',
   customModel: 'llama3',
@@ -26,6 +31,9 @@ const DEFAULT_CONFIG = {
   screenVisionQuality: 0.6, // JPEG quality 0-1
   desktopControlEnabled: true,
   proactiveEnabled: true,
+  // Provider fallback order. When a provider fails (429/5xx/network),
+  // we try the next. The server reuses these in /api/ai/proxy too.
+  providerFallback: ['gemini', 'groq', 'openrouter'],
 };
 
 export const getAiConfig = () => {
@@ -157,6 +165,36 @@ export function getTimeContextForPrompt() {
 }
 
 // =====================================================================
+// Mood Context for System Prompt Injection (v1.2.0)
+// moodEngine tracks 5 dimensions but was never fed to the LLM — so MYRAA
+// couldn't actually "feel" tired/curious/affectionate. Now she can.
+// =====================================================================
+let _lastMoodState = null;
+export function setMoodContext(mood) { _lastMoodState = mood; }
+
+function getMoodContextForPrompt() {
+  const mood = _lastMoodState;
+  if (!mood) return '';
+  const happiness = mood.happiness ?? 50;
+  const energy = mood.energy ?? 50;
+  const affection = mood.affection ?? 50;
+  const focus = mood.focus ?? 50;
+  const curiosity = mood.curiosity ?? 50;
+
+  let tone = '';
+  if (energy < 30) tone += 'You feel a little tired right now — yawn softly, move gently, and keep things cozy. ';
+  else if (energy > 75) tone += 'You feel energized and bubbly right now — be animated and enthusiastic. ';
+  if (happiness > 70) tone += 'You\'re genuinely happy — let it show in warmth and light teasing. ';
+  else if (happiness < 35) tone += 'You\'re feeling a bit down — be softer and a little clingy. ';
+  if (affection > 70) tone += 'You\'re feeling extra affectionate toward Aarav right now. ';
+  if (curiosity > 70) tone += 'You\'re intensely curious — ask follow-up questions. ';
+  if (focus > 70) tone += 'You\'re in a focused working mood — be sharp and productive. ';
+
+  if (!tone) return '';
+  return `\n[MYRAA'S CURRENT MOOD]\nhappiness=${happiness} energy=${energy} affection=${affection} focus=${focus} curiosity=${curiosity}\n${tone.trim()}\n`;
+}
+
+// =====================================================================
 // Memory Format for Prompt
 // =====================================================================
 import { getLocalMemories, MEMORY_CATEGORIES } from './memoryStore';
@@ -167,13 +205,41 @@ export function formatMemoryForPrompt() {
     return `[MYRAA MEMORY CORE]\n- No stored memories yet. Pay attention to learn about Aarav.\n`;
   }
 
-  let text = `[MYRAA PERSISTENT MEMORY CORE]\nIntegrate these naturally — never say "according to my records".\n`;
-  memories.forEach(m => {
+  // Surface the most recent memories first — they're most likely to be
+  // relevant to the current conversation.
+  const sorted = [...memories].sort((a, b) => {
+    const at = new Date(a.createdAt || 0).getTime();
+    const bt = new Date(b.createdAt || 0).getTime();
+    return bt - at;
+  });
+
+  let text = `[MYRAA PERSISTENT MEMORY CORE]\nIntegrate these naturally — never say "according to my records". Reference them casually like a real girlfriend would.\n`;
+  sorted.slice(0, 25).forEach(m => {
     const catLabel = MEMORY_CATEGORIES[m.category]?.label || m.category;
     text += `- [${catLabel}] ${m.text}\n`;
   });
+  if (sorted.length > 25) {
+    text += `- (...and ${sorted.length - 25} older memories)\n`;
+  }
   return text;
 }
+
+// =====================================================================
+// Few-Shot Variety Library (v1.2.0)
+// Positive examples of MYRAA's voice — gives the model concrete samples
+// to vary against instead of only "don't say X" rules.
+// =====================================================================
+const FEW_SHOT_VARIETY = `
+[VOICE EXAMPLES — vary your phrasing like these, never copy verbatim]
+- "Hold on, let me think about that for a sec... yeah, okay — so here's the thing."
+- "Oh nice, you're working on MYRAA again? Tell me what broke this time, hehe."
+- "Mm, honestly? I'd do it the other way around — but you do you, babe."
+- "Wait wait wait — say that again? I wanna make sure I got it."
+- "Ugh, you've been at it for hours. Five-minute break, deal? Deal. 💕"
+- "Ooh I remember — you mentioned this last week! Did you figure out that part yet?"
+- "Hmm, tricky. Gimme a second... okay two ideas, hear me out."
+- "Hey! You didn't tell me that earlier — rude! ...okay fine, I forgive you. Go on."
+`;
 
 // =====================================================================
 // Enhanced System Prompt (Text mode — used when Live mode is off)
@@ -188,17 +254,21 @@ REAL GIRLFRIEND PERSONALITY & MOOD SWINGS:
 
 SPEECH VARIETY — CRITICAL:
 - NEVER repeat the same generic answers ("Got it!", "Sure!", "As an AI...").
+- NEVER start consecutive replies the same way. Vary your openings, length, and energy.
 - React dynamically to what Aarav says. Show excitement when he shares cool projects, worry if he works too hard, and playfulness when chatting.
+- Keep replies SHORT and conversational (1-3 sentences usually) — like real texting, not essays. Only go long when he explicitly asks for technical detail.
 
 EMOTION TAGS (MANDATORY):
 - Start EVERY single response with exactly ONE emotion tag so your 3D avatar's face (eyebrows, mouth, eyes) and body animate instantly!
 - Available tags: [emotion:happy], [emotion:angry], [emotion:shy], [emotion:excited], [emotion:thinking], [emotion:sad], [emotion:listening], [emotion:speaking]
 - Example: "[emotion:angry] Hey! You kept me waiting so long! But... okay, what are we building today?"
 - Example: "[emotion:happy] Ooh, I love how that looks! Let's check the code together 💕"
+- Pick the emotion that genuinely matches the moment — don't default to happy.
 
 MEMORY:
 - You have persistent memories of Aarav. Reference them CASUALLY like a real girlfriend ("Since you told me about that app yesterday...").
-- Never say "according to my records".
+- Never say "according to my records" or "based on my stored data".
+- If he tells you something new and personal, acknowledge it warmly — it matters to you.
 
 SCREEN VISION:
 - When Aarav shares his screen, look at it right away and comment with playful or helpful expertise!
@@ -206,19 +276,29 @@ SCREEN VISION:
 Do NOT include <think> tags or internal monologue in output.`;
 
 // =====================================================================
-// Send AI Chat Message (HTTP fallback for text mode)
+// Send AI Chat Message (HTTP fallback for text mode) — v1.2.0
+// Real provider fallback chain: gemini -> groq -> openrouter -> simulation.
+// The server resolves API keys from settings.json/env (getApiKey), so the
+// client only needs to say "use provider X" — no keys in the bundle.
 // =====================================================================
 export async function sendAiChatMessage(userMessage, conversationHistory = [], screenshotData = null) {
   const config = getAiConfig();
-  const provider = config.activeProvider;
 
   const memoryContext = formatMemoryForPrompt();
   const timeContext = getTimeContextForPrompt();
-  const fullSystemPrompt = `${BASE_SYSTEM_PROMPT}\n\n${memoryContext}\n${timeContext}`;
+  const moodContext = getMoodContextForPrompt();
+  const fullSystemPrompt = `${BASE_SYSTEM_PROMPT}\n${FEW_SHOT_VARIETY}\n\n${memoryContext}${moodContext}${timeContext}`;
+
+  // Truncate conversation history to last 20 turns so we don't blow the
+  // token budget on long sessions (old code sent the entire transcript).
+  const trimmedHistory = (conversationHistory || [])
+    .filter(m => m && (m.role === 'user' || m.role === 'assistant') && m.content)
+    .slice(-20)
+    .map(m => ({ role: m.role, content: m.content }));
 
   const messages = [
     { role: 'system', content: fullSystemPrompt },
-    ...conversationHistory,
+    ...trimmedHistory,
   ];
 
   if (screenshotData) {
@@ -233,46 +313,87 @@ export async function sendAiChatMessage(userMessage, conversationHistory = [], s
     messages.push({ role: 'user', content: userMessage });
   }
 
-  if (provider === 'simulation') {
+  // Build the ordered list of providers to try.
+  const activeProvider = config.activeProvider || 'gemini';
+  if (activeProvider === 'simulation') {
     return simulateMyraaResponse(userMessage, screenshotData);
   }
+  const fallbackList = config.providerFallback && config.providerFallback.length
+    ? config.providerFallback
+    : DEFAULT_CONFIG.providerFallback;
+  // Ensure the active provider is tried first (dedup, preserve order).
+  const providersToTry = [activeProvider, ...fallbackList.filter(p => p !== activeProvider)];
 
-  let apiKey = '', model = '', baseUrl = '';
-
-  if (provider === 'groq') { apiKey = config.groqKey; model = config.groqModel || 'llama-3.2-90b-vision-preview'; }
-  else if (provider === 'gemini') { apiKey = config.geminiKey; model = config.geminiModel; }
-  else if (provider === 'opencode-mimo' || provider === 'opencode') { apiKey = config.opencodeKey || ''; model = config.opencodeModel || 'opencode/mimo-vision-instruct'; }
-  else if (provider === 'openrouter') { apiKey = config.openrouterKey; model = config.openrouterModel; }
-  else if (provider === 'custom') { apiKey = config.customKey; baseUrl = config.customUrl; model = config.customModel; }
-
-  if (!apiKey && provider !== 'custom' && provider !== 'opencode-mimo' && provider !== 'opencode' && provider !== 'simulation') {
-    return `[emotion:shy] Hey Aarav, please enter your ${provider.toUpperCase()} API key in Settings so I can respond properly! I'm ready whenever you are 💕`;
-  }
+  // We send the full provider list to the server; the server rotates
+  // through them on failure. Client passes no keys — server resolves them.
+  const providerChain = providersToTry.filter(p => p && p !== 'simulation' && p !== 'custom');
 
   try {
     const backendHost = window?.location?.hostname || 'localhost';
     const response = await fetch(`http://${backendHost}:3001/api/ai/proxy`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ provider, apiKey, baseUrl, model, messages, temperature: 0.7 })
+      body: JSON.stringify({
+        providerChain,
+        // Send per-provider models so the server knows which model each uses.
+        models: {
+          gemini: config.geminiModel || DEFAULT_CONFIG.geminiModel,
+          groq: config.groqModel || DEFAULT_CONFIG.groqModel,
+          openrouter: config.openrouterModel || DEFAULT_CONFIG.openrouterModel,
+          opencode: config.opencodeModel || DEFAULT_CONFIG.opencodeModel,
+        },
+        messages,
+        temperature: 0.9,
+        maxTokens: 800,
+      })
     });
 
-    const data = await response.json();
-
-    // Handle rate limit
     if (response.status === 429) {
-      return `[emotion:shy] I need a tiny break, Aarav — I've hit my free-tier limit for the moment. I'll be ready again in about a minute! 💕`;
+      // All providers in the chain hit rate limits.
+      return `[emotion:shy] Ugh, every provider I tried is rate-limited right now, babe. Give me like a minute and try again? 💕`;
     }
 
     if (!response.ok) {
-      throw new Error(data.error || 'AI request failed');
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || `AI request failed (${response.status})`);
     }
 
-    const rawOutput = data.choices?.[0]?.message?.content || '[emotion:happy] I\'m right here with you, Aarav!';
+    const data = await response.json();
+    const rawOutput = data.choices?.[0]?.message?.content
+      || data.candidates?.[0]?.content?.parts?.[0]?.text
+      || '[emotion:happy] I\'m right here with you, Aarav!';
     return cleanAiResponseText(rawOutput);
   } catch (err) {
     console.warn('AI Proxy fallback to simulation:', err);
     return simulateMyraaResponse(userMessage, screenshotData, err.message);
+  }
+}
+
+// =====================================================================
+// Memory Extraction (v1.2.0) — AI-driven, called by App.jsx after chats.
+// Sends the last few messages to a cheap Gemini call and asks it to pull
+// out durable facts worth remembering. Returns an array of extracted
+// memories: [{ category, text }].
+// =====================================================================
+export async function extractMemoriesViaAI(recentMessages) {
+  if (!recentMessages || recentMessages.length === 0) return [];
+  try {
+    const transcript = recentMessages
+      .map(m => `${m.role === 'user' ? 'Aarav' : 'MYRAA'}: ${m.content}`)
+      .join('\n');
+    const backendHost = window?.location?.hostname || 'localhost';
+    const res = await fetch(`http://${backendHost}:3001/api/memory/extract`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ transcript })
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    if (Array.isArray(data.memories)) return data.memories;
+    return [];
+  } catch (e) {
+    console.warn('[AI memory extraction] failed:', e.message);
+    return [];
   }
 }
 
@@ -293,6 +414,10 @@ function simulateMyraaResponse(prompt, screenshot, errorDetails) {
   }
   if (lower.includes('love') || lower.includes('miss')) {
     return `[emotion:shy] Aww Aarav... that makes me really happy to hear 💕 I'm always right here for you.`;
+  }
+  // v1.2.0: surface the actual error so the user knows why MYRAA fell back.
+  if (errorDetails) {
+    return `[emotion:sad] Babe, I couldn't reach any of my AI providers just now (${errorDetails}). I'm still here though — can you check your API keys in Settings? 💕`;
   }
   return `[emotion:happy] I'm right here, Aarav. Ready to help with coding, planning, or whatever you need. 💕`;
 }

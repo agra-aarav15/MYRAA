@@ -577,9 +577,144 @@ app.post('/api/ai/tts', async (req, res) => {
 
 // =====================================================================
 // 7. Universal AI Provider Proxy (HTTP fallback for non-Live mode)
+// v1.2.0: supports a providerChain for automatic fallback. API keys are
+// resolved server-side from settings.json / env (getApiKey), so the client
+// never ships keys in the bundle. Backward compatible with the old single
+// { provider, apiKey } call shape.
 // =====================================================================
+
+// Build a normalized request for a single provider. Returns a fetch-ready
+// { url, headers, body } or throws on misconfiguration. Used both for the
+// primary call and the fallback loop so every provider gets identical
+// handling.
+function buildProviderRequest(provider, opts) {
+  const { apiKey, model, baseUrl, messages, temperature, maxTokens } = opts;
+  const headers = { 'Content-Type': 'application/json' };
+
+  if (provider === 'groq') {
+    if (!apiKey) throw new Error('No Groq API key');
+    headers['Authorization'] = `Bearer ${apiKey}`;
+    return {
+      url: 'https://api.groq.com/openai/v1/chat/completions',
+      headers,
+      body: { model: model || 'llama-3.3-70b-versatile', messages, temperature, max_tokens: maxTokens }
+    };
+  }
+  if (provider === 'openrouter') {
+    if (!apiKey) throw new Error('No OpenRouter API key');
+    headers['Authorization'] = `Bearer ${apiKey}`;
+    headers['HTTP-Referer'] = 'http://localhost:5173';
+    headers['X-Title'] = 'MYRAA Assistant';
+    return {
+      url: 'https://openrouter.ai/api/v1/chat/completions',
+      headers,
+      body: { model: model || 'google/gemini-2.0-flash-001', messages, temperature, max_tokens: maxTokens }
+    };
+  }
+  if (provider === 'opencode-mimo' || provider === 'opencode') {
+    if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+    headers['HTTP-Referer'] = 'http://localhost:5173';
+    headers['X-Title'] = 'MYRAA Assistant';
+    return {
+      url: baseUrl || 'https://opencode.ai/zen/go/v1/chat/completions',
+      headers,
+      body: { model: model || 'opencode/mimo-vision-instruct', messages, temperature, max_tokens: maxTokens }
+    };
+  }
+  if (provider === 'gemini') {
+    if (!apiKey) throw new Error('No Gemini API key');
+    const geminiModel = model || 'gemini-2.0-flash';
+    // Gemini uses a different request shape; build it inline.
+    let systemPromptText = '';
+    const dialogueMessages = [];
+    messages.forEach(m => {
+      if (m.role === 'system') {
+        const sysText = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
+        systemPromptText = systemPromptText ? `${systemPromptText}\n${sysText}` : sysText;
+      } else {
+        dialogueMessages.push(m);
+      }
+    });
+    const rawContents = dialogueMessages.map(m => ({
+      role: m.role === 'assistant' ? 'model' : 'user',
+      parts: Array.isArray(m.content)
+        ? m.content.map(c => {
+            if (c.type === 'image_url') {
+              const base64Str = c.image_url.url.split(',')[1];
+              const mimeType = c.image_url.url.split(';')[0].replace('data:', '');
+              return { inline_data: { mime_type: mimeType, data: base64Str } };
+            }
+            return { text: c.text || JSON.stringify(c) };
+          })
+        : [{ text: typeof m.content === 'string' ? m.content : JSON.stringify(m.content) }]
+    }));
+    // Merge consecutive turns with the same role.
+    const contents = [];
+    for (const item of rawContents) {
+      if (contents.length > 0 && contents[contents.length - 1].role === item.role) {
+        contents[contents.length - 1].parts.push(...item.parts);
+      } else {
+        contents.push(item);
+      }
+    }
+    const payload = { contents, generationConfig: { temperature, maxOutputTokens: maxTokens } };
+    if (systemPromptText) payload.systemInstruction = { parts: [{ text: systemPromptText }] };
+    return {
+      url: `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${apiKey}`,
+      headers: { 'Content-Type': 'application/json' },
+      body: payload,
+      isGemini: true
+    };
+  }
+  if (provider === 'custom') {
+    const targetBase = (baseUrl || 'http://localhost:11434/v1').replace(/\/$/, '');
+    if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+    return {
+      url: `${targetBase}/chat/completions`,
+      headers,
+      body: { model: model || 'llama3', messages, temperature, max_tokens: maxTokens }
+    };
+  }
+  throw new Error(`Unsupported provider: ${provider}`);
+}
+
+// Execute one provider request and normalize the response to OpenAI shape.
+// Throws on any failure so the caller can fall back to the next provider.
+async function callProvider(provider, opts) {
+  const { url, headers, body, isGemini } = buildProviderRequest(provider, opts);
+  trackRequest();
+  const aiRes = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
+  const data = await aiRes.json().catch(() => ({}));
+
+  if (!aiRes.ok) {
+    const msg = data?.error?.message || data?.error || `Provider ${provider} returned ${aiRes.status}`;
+    const err = new Error(msg);
+    err.status = aiRes.status;
+    err.provider = provider;
+    throw err;
+  }
+
+  if (isGemini) {
+    const textOutput = data.candidates?.[0]?.content?.parts?.[0]?.text
+      || '[emotion:happy] I\'m right here with you, Aarav!';
+    return { choices: [{ message: { role: 'assistant', content: textOutput } }] };
+  }
+  // OpenAI-compatible providers (groq/openrouter/opencode/custom) already
+  // return the right shape; validate it has content.
+  const content = data.choices?.[0]?.message?.content;
+  if (!content) {
+    throw new Error(`Provider ${provider} returned empty content`);
+  }
+  return data;
+}
+
 app.post('/api/ai/proxy', async (req, res) => {
-  const { provider, apiKey, baseUrl, model, messages, maxTokens = 1000, temperature = 0.7 } = req.body;
+  const body = req.body || {};
+  const {
+    provider, apiKey, baseUrl, model, models,
+    messages, maxTokens = 800, temperature = 0.9,
+    providerChain
+  } = body;
 
   if (!canMakeRequest()) {
     return res.status(429).json({
@@ -588,107 +723,57 @@ app.post('/api/ai/proxy', async (req, res) => {
     });
   }
 
-  try {
-    let endpointUrl = '';
-    let headers = { 'Content-Type': 'application/json' };
-    let bodyPayload = {};
-
-    if (provider === 'groq') {
-      endpointUrl = 'https://api.groq.com/openai/v1/chat/completions';
-      headers['Authorization'] = `Bearer ${apiKey}`;
-      bodyPayload = { model: model || 'llama-3.2-90b-vision-preview', messages, temperature, max_tokens: maxTokens };
-    } else if (provider === 'opencode-mimo' || provider === 'opencode') {
-      endpointUrl = baseUrl || 'https://opencode.ai/zen/go/v1/chat/completions';
-      if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
-      headers['HTTP-Referer'] = 'http://localhost:5173';
-      headers['X-Title'] = 'MYRAA Assistant';
-      bodyPayload = { model: model || 'opencode/mimo-vision-instruct', messages, temperature, max_tokens: maxTokens };
-    } else if (provider === 'openrouter') {
-      endpointUrl = 'https://openrouter.ai/api/v1/chat/completions';
-      headers['Authorization'] = `Bearer ${apiKey}`;
-      headers['HTTP-Referer'] = 'http://localhost:5173';
-      headers['X-Title'] = 'MYRAA Assistant';
-      bodyPayload = { model: model || 'google/gemini-2.0-flash-lite-001', messages, temperature, max_tokens: maxTokens };
-    } else if (provider === 'gemini') {
-      const geminiModel = model || 'gemini-2.0-flash';
-      endpointUrl = `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${apiKey}`;
-
-      let systemPromptText = '';
-      const dialogueMessages = [];
-
-      messages.forEach(m => {
-        if (m.role === 'system') {
-          const sysText = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
-          systemPromptText = systemPromptText ? `${systemPromptText}\n${sysText}` : sysText;
-        } else {
-          dialogueMessages.push(m);
-        }
-      });
-
-      const rawContents = dialogueMessages.map(m => ({
-        role: m.role === 'assistant' ? 'model' : 'user',
-        parts: Array.isArray(m.content)
-          ? m.content.map(c => {
-              if (c.type === 'image_url') {
-                const base64Str = c.image_url.url.split(',')[1];
-                const mimeType = c.image_url.url.split(';')[0].replace('data:', '');
-                return { inline_data: { mime_type: mimeType, data: base64Str } };
-              }
-              return { text: c.text || JSON.stringify(c) };
-            })
-          : [{ text: typeof m.content === 'string' ? m.content : JSON.stringify(m.content) }]
-      }));
-
-      // Merge consecutive turns with the same role
-      const contents = [];
-      for (const item of rawContents) {
-        if (contents.length > 0 && contents[contents.length - 1].role === item.role) {
-          contents[contents.length - 1].parts.push(...item.parts);
-        } else {
-          contents.push(item);
-        }
-      }
-
-      const payload = {
-        contents,
-        generationConfig: { temperature, maxOutputTokens: maxTokens }
-      };
-
-      if (systemPromptText) {
-        payload.systemInstruction = { parts: [{ text: systemPromptText }] };
-      }
-
-      trackRequest();
-      const geminiRes = await fetch(endpointUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      const data = await geminiRes.json();
-      if (data.error) return res.status(400).json({ error: data.error.message });
-
-      const textOutput = data.candidates?.[0]?.content?.parts?.[0]?.text || '[emotion:happy] I\'m right here with you, Aarav!';
-      return res.json({ choices: [{ message: { role: 'assistant', content: textOutput } }] });
-    } else if (provider === 'custom') {
-      const targetBase = (baseUrl || 'http://localhost:11434/v1').replace(/\/$/, '');
-      endpointUrl = `${targetBase}/chat/completions`;
-      if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
-      bodyPayload = { model: model || 'llama3', messages, temperature, max_tokens: maxTokens };
-    } else if (provider === 'simulation') {
-      return res.json({ choices: [{ message: { role: 'assistant', content: simulateResponse(messages) } }] });
-    } else {
-      return res.status(400).json({ error: `Unsupported provider: ${provider}` });
-    }
-
-    trackRequest();
-    const aiRes = await fetch(endpointUrl, { method: 'POST', headers, body: JSON.stringify(bodyPayload) });
-    const data = await aiRes.json();
-    if (!aiRes.ok) return res.status(aiRes.status).json({ error: data.error?.message || data.error || 'AI error' });
-    res.json(data);
-  } catch (err) {
-    console.error('AI Proxy Error:', err.message);
-    res.status(500).json({ error: 'Failed to reach AI provider', details: err.message });
+  // Backward compat: if a single { provider, apiKey } is sent, build a
+  // one-element chain. Otherwise use the explicit providerChain.
+  let chain;
+  if (Array.isArray(providerChain) && providerChain.length > 0) {
+    chain = providerChain.filter(p => p && p !== 'simulation');
+  } else if (provider) {
+    chain = [provider];
+  } else {
+    return res.status(400).json({ error: 'No provider or providerChain specified' });
   }
+
+  // If the old-style apiKey is supplied for a single-provider call, honor
+  // it directly; otherwise resolve keys from settings.json / env per call.
+  const optsFor = (p) => ({
+    apiKey: apiKey || getApiKey(p),
+    baseUrl,
+    model: (models && models[p]) || model,
+    messages,
+    temperature,
+    maxTokens,
+  });
+
+  const errors = [];
+  for (const p of chain) {
+    try {
+      if (p === 'simulation') continue;
+      const result = await callProvider(p, optsFor(p));
+      return res.json(result);
+    } catch (err) {
+      errors.push(`${p}: ${err.message}`);
+      // 429 means rate-limited — try the next provider. 4xx (bad key/model)
+      // also fall through. Only network errors would naturally retry next.
+      console.warn(`[AI Proxy] provider ${p} failed: ${err.message}`);
+    }
+  }
+
+  // Every provider failed.
+  // If at least one failure looked like rate-limiting, surface 429 so the
+  // client shows the right message; otherwise 502.
+  const anyRateLimited = errors.some(e => /rate|429|quota/i.test(e));
+  if (anyRateLimited) {
+    return res.status(429).json({
+      error: 'All AI providers are rate-limited right now.',
+      details: errors,
+      rateLimit: getRateLimitStatus()
+    });
+  }
+  return res.status(502).json({
+    error: 'All AI providers failed.',
+    details: errors
+  });
 });
 
 function simulateResponse(messages) {
