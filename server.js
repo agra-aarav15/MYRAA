@@ -24,6 +24,39 @@ const SETTINGS_FILE_PATH = path.join(__dirname, 'settings.json');
 const SESSION_FILE_PATH = path.join(__dirname, 'session_state.json');
 
 // =====================================================================
+// Safe settings loader — returns {} if missing/corrupt instead of throwing.
+// v1.2.0: single source of truth for settings reads (TTS, AI keys, etc.).
+// Also merges process.env overrides so .env can supply API keys.
+// =====================================================================
+function loadSettingsSafe() {
+  try {
+    if (fs.existsSync(SETTINGS_FILE_PATH)) {
+      const raw = fs.readFileSync(SETTINGS_FILE_PATH, 'utf8');
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    }
+  } catch (e) {
+    console.warn('[Settings] Failed to read settings.json:', e.message);
+  }
+  return {};
+}
+
+// Resolve a provider API key in priority order: settings.json key > env var.
+// Exposed for Phase 2 provider fallback chain.
+function getApiKey(provider) {
+  const settings = loadSettingsSafe();
+  const keys = settings.apiKeys || {};
+  const envMap = {
+    gemini: 'GEMINI_API_KEY',
+    groq: 'GROQ_API_KEY',
+    openrouter: 'OPENROUTER_API_KEY',
+    opencode: 'OPENCODE_API_KEY',
+  };
+  const envVar = envMap[provider];
+  return keys[provider] || (envVar ? process.env[envVar] : undefined);
+}
+
+// =====================================================================
 // FREE-TIER RATE LIMITER
 // Gemini 2.0 Flash free tier: 15 RPM, 1M TPD, 1500 RPD
 // Memory consolidation uses separate calls — budget carefully
@@ -472,15 +505,69 @@ app.post('/api/tools/execute', async (req, res) => {
 
 // =====================================================================
 // High-Quality Neural TTS Endpoint (Microsoft Edge Neural Female Voice)
+// v1.2.0: accepts optional rate/pitch/volume prosody so MYRAA's warmth
+// is tunable without code changes, and the default voice is configurable
+// via settings.json. Text is XML-escaped to prevent SSML injection.
 // =====================================================================
+const TTS_VOICE_PRESETS = {
+  // Premium adult female voices — warm, mature, expressive.
+  ava:     'en-US-AvaNeural',      // warm, conversational (default)
+  jenny:   'en-US-JennyNeural',    // friendly, warm
+  aria:    'en-US-AriaNeural',     // conversational, expressive
+  michelle:'en-US-MichelleNeural', // conversational
+  sonia:   'en-GB-SoniaNeural',    // warm British female
+  libby:   'en-GB-LibbyNeural',    // bright British female
+};
+
+function escapeSsmlText(s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+// Validate a prosody value so a bad client can't break the SSML. Accepts
+// the msedge-tts relative forms: '+10%', '-2%', '0.9', 'slow', etc.
+function sanitizeProsody(val) {
+  if (val == null) return undefined;
+  const s = String(val).trim();
+  if (s === '') return undefined;
+  if (/^[+\-]?\d+(\.\d+)?%?$/.test(s)) return s;            // +5%, -2%, 0.9, +0%
+  if (/^(x-slow|slow|medium|fast|x-fast|x-low|low|high|x-high|silent|x-soft|soft|loud|x-LOUD|default)$/i.test(s)) return s.toLowerCase();
+  return undefined;                                          // reject anything else
+}
+
 app.post('/api/ai/tts', async (req, res) => {
-  const { text, voice = 'en-US-AvaNeural' } = req.body;
+  let { text, voice, rate, pitch, volume } = req.body || {};
   if (!text) return res.status(400).json({ error: 'Text required' });
+
+  // Resolve voice: explicit ID > preset name > settings.json default > Ava.
+  const settings = loadSettingsSafe();
+  let resolvedVoice = voice || settings.ttsVoice || TTS_VOICE_PRESETS.ava;
+  if (TTS_VOICE_PRESETS[String(resolvedVoice).toLowerCase()]) {
+    resolvedVoice = TTS_VOICE_PRESETS[String(resolvedVoice).toLowerCase()];
+  }
+
+  // Prosody from request or settings, sanitized.
+  const prosody = {};
+  const r = sanitizeProsody(rate ?? settings.ttsRate);
+  const p = sanitizeProsody(pitch ?? settings.ttsPitch);
+  const v = sanitizeProsody(volume ?? settings.ttsVolume);
+  if (r !== undefined) prosody.rate = r;
+  if (p !== undefined) prosody.pitch = p;
+  if (v !== undefined) prosody.volume = v;
+
   try {
     const tts = new MsEdgeTTS();
-    await tts.setMetadata(voice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
-    const { audioStream } = await tts.toStream(text);
+    await tts.setMetadata(resolvedVoice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
+    const safe = escapeSsmlText(text);
+    const { audioStream } = Object.keys(prosody).length
+      ? await tts.toStream(safe, prosody)
+      : await tts.toStream(safe);
     res.setHeader('Content-Type', 'audio/mpeg');
+    res.setHeader('Cache-Control', 'no-store');
     audioStream.pipe(res);
   } catch (err) {
     console.error('Edge TTS error:', err);
