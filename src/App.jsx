@@ -222,11 +222,24 @@ export default function App() {
         }
       },
       onTranscription: (role, text) => {
-        setLastActivityTime(Date.now());
-        if (role === 'user') {
-          executeDirectCommand(text);
-          autoExtractMemoriesFromChat(text);
-          setMessages(prev => [...prev, {
+	        setLastActivityTime(Date.now());
+	        if (role === 'user') {
+	          executeDirectCommand(text).then(toolResults => {
+	            if (toolResults && toolResults.length > 0) {
+	              const confirmations = toolResults
+	                .filter(r => r.success && r.humanMessage)
+	                .map(r => r.humanMessage);
+	              if (confirmations.length > 0) {
+	                setMessages(prev => [...prev, {
+	                  role: 'assistant',
+	                  content: `[emotion:happy] ${confirmations.join(' | ')} 💕`,
+	                  timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+	                }]);
+	              }
+	            }
+	          });
+	          autoExtractMemoriesFromChat(text);
+	          setMessages(prev => [...prev, {
             role: 'user',
             content: text,
             timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
@@ -234,10 +247,24 @@ export default function App() {
           setAvatarExpression('listening');
           updateMood('message_sent', { text });
           refreshMood();
-        } else if (role === 'model') {
-          const { text: cleanText, emotion } = extractEmotion(text);
-          executeDirectCommand(cleanText);
-          setMessages(prev => {
+	        } else if (role === 'model') {
+	          const { text: cleanText, emotion } = extractEmotion(text);
+	          executeDirectCommand(cleanText).then(toolResults => {
+	            if (toolResults && toolResults.length > 0) {
+	              const confirmations = toolResults
+	                .filter(r => r.success && r.humanMessage)
+	                .map(r => r.humanMessage);
+	              if (confirmations.length > 0) {
+	                setMessages(prev => [...prev, {
+	                  role: 'assistant',
+	                  content: `[emotion:happy] ${confirmations.join(' | ')} 💕`,
+	                  isStreaming: true,
+	                  timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+	                }]);
+	              }
+	            }
+	          });
+	          setMessages(prev => {
             const copy = [...prev];
             const last = copy[copy.length - 1];
             if (last && last.role === 'assistant' && last.isStreaming) {
@@ -470,6 +497,18 @@ export default function App() {
 
       // Tool commands the AI itself decided to invoke.
       const replyToolResults = await executeDirectCommand(sanitizedReply);
+      if (replyToolResults && replyToolResults.length > 0) {
+        const confirmations = replyToolResults
+          .filter(r => r.success && r.humanMessage)
+          .map(r => r.humanMessage);
+        if (confirmations.length > 0) {
+          setMessages(prev => [...prev, {
+            role: 'assistant',
+            content: `[emotion:happy] ${confirmations.join(' | ')} 💕`,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          }]);
+        }
+      }
 
       setMessages(prev => [...prev, {
         role: 'assistant',
@@ -532,7 +571,7 @@ export default function App() {
     // browser speechSynthesis.
     const backendHost = window?.location?.hostname || 'localhost';
     try {
-      const ttsUrl = `http://${backendHost}:3001/api/ai/tts?text=${encodeURIComponent(cleanText)}&voice=en-US-AvaNeural&rate=${encodeURIComponent('+0%25')}&pitch=${encodeURIComponent('-2%25')}&volume=${encodeURIComponent('+0%25')}`;
+      const ttsUrl = `http://${backendHost}:3001/api/ai/tts?text=${encodeURIComponent(cleanText)}&voice=en-US-AvaNeural&rate=${encodeURIComponent('+0%')}&pitch=${encodeURIComponent('-2%')}&volume=${encodeURIComponent('+0%')}`;
       const audio = new Audio(ttsUrl);
       neuralAudioRef.current = audio;
 
