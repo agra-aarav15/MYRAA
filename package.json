@@ -6,17 +6,16 @@
   "main": "electron/main.js",
   "build": {
     "appId": "com.myraa.app",
-    "electronDist": "E:/_build_cache/electron-dist",
     "productName": "MYRAA Companion",
     "directories": {
       "output": "dist_electron"
     },
+    "artifactName": "MYRAA-Companion-${version}-${os}-${arch}.${ext}",
     "files": [
       "dist/**/*",
       "electron/**/*",
       "server.js",
       "memories.json",
-      "settings.json",
       "public/**/*",
       "node_modules/**/*"
     ],
@@ -27,12 +26,19 @@
       }
     ],
     "win": {
-      "target": ["nsis", "portable"]
+      "target": ["nsis", "portable"],
+      "icon": "build/icon.ico"
     },
     "nsis": {
       "oneClick": false,
+      "perMachine": false,
       "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "MYRAA Companion"
+    },
+    "portable": {
+      "artifactName": "MYRAA-Companion-${version}-portable.exe"
     }
   },
   "scripts": {

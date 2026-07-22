@@ -30,3 +30,7 @@ android/app/build/
 .env
 .env.local
 .env.*.local
+
+# Secrets — API keys live here, never commit
+settings.json
+session_state.json

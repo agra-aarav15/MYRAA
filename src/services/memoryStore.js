@@ -10,6 +10,8 @@
 // when no AI provider is configured.
 // =====================================================================
 
+import { extractMemoriesViaAI } from './aiProvider';
+
 const MEMORY_STORAGE_KEY = 'MYRAA_COMPANION_MEMORIES_V2';
 
 export const MEMORY_CATEGORIES = {
@@ -277,8 +279,6 @@ export async function extractMemoriesFromTranscript(messages) {
   _lastAiExtractAt = now;
 
   try {
-    // Import lazily so memoryStore has no hard dependency on aiProvider.
-    const { extractMemoriesViaAI } = await import('./aiProvider');
     const extracted = await extractMemoriesViaAI(messages);
     for (const mem of extracted) {
       if (mem && mem.category && mem.text) {

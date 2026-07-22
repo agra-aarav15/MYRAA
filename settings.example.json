@@ -1,0 +1,13 @@
+{
+  "_comment": "Copy this file to settings.json and fill in your API keys. settings.json is gitignored and NEVER ships in the installer.",
+  "apiKeys": {
+    "gemini": "YOUR_GEMINI_API_KEY",
+    "groq": "YOUR_GROQ_API_KEY_OPTIONAL",
+    "openrouter": "YOUR_OPENROUTER_API_KEY_OPTIONAL"
+  },
+  "ttsVoice": "en-US-AvaNeural",
+  "ttsRate": "+0%",
+  "ttsPitch": "-2%",
+  "ttsVolume": "+0%",
+  "voicePreset": "Aoede"
+}
