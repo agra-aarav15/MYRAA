@@ -33,17 +33,38 @@ export default function BrowserAgentModal({ isOpen, onClose, initialUrl = 'https
 
     setIsSearching(true);
     try {
-      // Direct Web & YouTube Search Simulation
-      const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(q)}`;
-      handleNavigate(searchUrl);
-      setSearchResults([
-        { title: `Search results for "${q}"`, snippet: `Browsing web for ${q}...`, url: searchUrl }
-      ]);
+      const host = window.location.hostname || 'localhost';
+      // Try the new backend search endpoint first (Layer A).
+      const res = await fetch(`http://${host}:3001/api/web/search`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: q, count: 6 })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.results && data.results.length > 0) {
+          setSearchResults(data.results.map(r => ({
+            title: r.title,
+            snippet: r.snippet,
+            url: r.url
+          })));
+          if (data.results[0]?.url) {
+            handleNavigate(data.results[0].url);
+          }
+          return;
+        }
+      }
     } catch (e) {
-      console.warn(e);
-    } finally {
-      setIsSearching(false);
+      console.warn('Web search endpoint unreachable, falling back to direct url:', e);
     }
+
+    // Fallback: direct Google URL
+    const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(q)}`;
+    handleNavigate(searchUrl);
+    setSearchResults([
+      { title: `Search results for "${q}"`, snippet: `Browsing web for ${q}...`, url: searchUrl }
+    ]);
+    setIsSearching(false);
   };
 
   const handleAddTab = () => {

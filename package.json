@@ -27,7 +27,7 @@
     ],
     "win": {
       "target": ["nsis", "portable"],
-      "icon": "build/icon.ico"
+      "icon": "public/favicon.svg"
     },
     "nsis": {
       "oneClick": false,

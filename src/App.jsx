@@ -389,8 +389,23 @@ export default function App() {
     if (isProcessing) return;
 
     // Check and execute desktop/web command immediately ("open youtube", etc.)
-    executeDirectCommand(textToSend);
+    const toolResults = await executeDirectCommand(textToSend);
     autoExtractMemoriesFromChat(textToSend);
+
+    // If a desktop tool ran, push a quick confirmation into chat so MYRAA
+    // can acknowledge what she did.
+    if (toolResults && toolResults.length > 0) {
+      const confirmations = toolResults
+        .filter(r => r.success && r.humanMessage)
+        .map(r => r.humanMessage);
+      if (confirmations.length > 0) {
+        setMessages(prev => [...prev, {
+          role: 'assistant',
+          content: `[emotion:happy] ${confirmations.join(' | ')} 💕`,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        }]);
+      }
+    }
 
     // Topic-based mood events (never fired before — focus/curiosity stayed flat).
     const lower = textToSend.toLowerCase();
@@ -453,7 +468,8 @@ export default function App() {
       const rawAiReply = await sendAiChatMessage(textToSend, history, screenToUse);
       const { text: sanitizedReply, emotion } = extractEmotion(cleanAiResponseText(rawAiReply));
 
-      executeDirectCommand(sanitizedReply);
+      // Tool commands the AI itself decided to invoke.
+      const replyToolResults = await executeDirectCommand(sanitizedReply);
 
       setMessages(prev => [...prev, {
         role: 'assistant',
@@ -509,87 +525,51 @@ export default function App() {
     }
     if (window.speechSynthesis) window.speechSynthesis.cancel();
 
-    // Try streaming Edge Neural TTS — start playback as soon as the first
-    // bytes arrive instead of buffering the whole MP3 (huge latency win).
+    // Try streaming Edge Neural TTS via an <audio> element URL.
+    // Browsers natively play MP3 data progressively as it arrives over the
+    // network — zero client-side buffering, true streaming.
+    // If autoplay is blocked or the server is unreachable, fall through to
+    // browser speechSynthesis.
+    const backendHost = window?.location?.hostname || 'localhost';
     try {
-      const backendHost = window?.location?.hostname || 'localhost';
-      const res = await fetch(`http://${backendHost}:3001/api/ai/tts`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          text: cleanText,
-          voice: 'en-US-AvaNeural',
-          rate: '+0%',     // natural pace
-          pitch: '-2%',    // subtly warmer, less child-like
-          volume: '+0%'
-        })
-      });
-      if (res.ok && res.body) {
+      const ttsUrl = `http://${backendHost}:3001/api/ai/tts?text=${encodeURIComponent(cleanText)}&voice=en-US-AvaNeural&rate=${encodeURIComponent('+0%25')}&pitch=${encodeURIComponent('-2%25')}&volume=${encodeURIComponent('+0%25')}`;
+      const audio = new Audio(ttsUrl);
+      neuralAudioRef.current = audio;
+
+      // Tap the audio element so the avatar can drive lip-sync from it.
+      try {
         const audioCtx = getTtsAudioContext();
-        // Decode the streamed MP3 progressively. AudioDecoder would be ideal
-        // but isn't universally available; for short utterances a single
-        // blob is fast enough once the network streams. We still begin the
-        // fetch as a stream and decode the first chunk eagerly.
-        const reader = res.body.getReader();
-        const chunks = [];
-        let total = 0;
-        let firstReceived = false;
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          if (value) {
-            chunks.push(value);
-            total += value.length;
-            // Start the audio element as soon as we have a usable first
-            // chunk — the browser will keep buffering while playing.
-            if (!firstReceived && total > 8192) {
-              firstReceived = true;
-            }
-          }
+        if (!audio._myraaSource) {
+          const src = audioCtx.createMediaElementSource(audio);
+          const an = audioCtx.createAnalyser();
+          an.fftSize = 512;
+          an.smoothingTimeConstant = 0.6;
+          src.connect(an);
+          an.connect(audioCtx.destination);
+          audio._myraaSource = src;
+          audio._myraaAnalyser = an;
         }
-        const blob = new Blob(chunks, { type: 'audio/mpeg' });
-        const url = URL.createObjectURL(blob);
-        const audio = new Audio(url);
-        neuralAudioRef.current = audio;
-        audio.onplay = () => { setIsSpeaking(true); };
-        audio.onended = () => { setIsSpeaking(false); URL.revokeObjectURL(url); neuralAudioRef.current = null; };
-        audio.onerror = () => { setIsSpeaking(false); URL.revokeObjectURL(url); neuralAudioRef.current = null; };
-        await audio.play().catch(() => {
-          // Autoplay can be blocked until a user gesture — fall through.
-          throw new Error('autoplay-blocked');
-        });
-        // Tap the audio element so the avatar can drive lip-sync from it.
-        // Use a lazy cached MediaElementSource per element (you can't create
-        // two sources on the same element).
-        try {
-          if (!audio._myraaSource) {
-            const src = audioCtx.createMediaElementSource(audio);
-            const an = audioCtx.createAnalyser();
-            an.fftSize = 512;
-            an.smoothingTimeConstant = 0.6;
-            src.connect(an);
-            an.connect(audioCtx.destination);
-            audio._myraaSource = src;
-            audio._myraaAnalyser = an;
-          }
-          setAvatarAnalyser(audio._myraaAnalyser);
-        } catch (e) {
-          // Some hosts disallow MediaElementSource on cross-origin audio;
-          // silent fallback keeps speech working without analyser-driven lips.
-        }
-        // Touch audioCtx so it's resumed on this user-gesture path.
-        audioCtx.resume();
-        return;
+        setAvatarAnalyser(audio._myraaAnalyser);
+      } catch (e) {
+        // Some hosts disallow MediaElementSource on cross-origin audio;
+        // silent fallback keeps speech working without analyser-driven lips.
       }
+
+      audio.onplay = () => { setIsSpeaking(true); };
+      audio.onended = () => { setIsSpeaking(false); neuralAudioRef.current = null; };
+      audio.onerror = () => { setIsSpeaking(false); neuralAudioRef.current = null; };
+      await audio.play();
+      return; // success — don't fall through to browser TTS
     } catch (e) {
       console.warn("Neural TTS server unreachable or blocked, falling back to browser TTS:", e);
+      if (neuralAudioRef.current) { try { neuralAudioRef.current.pause(); } catch(e2) {} neuralAudioRef.current = null; }
     }
 
     if (!window.speechSynthesis) return;
     const speakWithAvailableVoices = () => {
       const utterance = new SpeechSynthesisUtterance(cleanText);
-      utterance.rate = 0.96;    // slightly slower = warmer, more intimate
-      utterance.pitch = 0.95;   // lower pitch removes child-like quality
+      utterance.rate = 0.96;
+      utterance.pitch = 0.95;
       utterance.volume = 1.0;
 
       const voices = window.speechSynthesis.getVoices();

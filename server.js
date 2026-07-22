@@ -702,6 +702,43 @@ app.post('/api/ai/tts', async (req, res) => {
   }
 });
 
+// GET variant of the same TTS endpoint — returns MP3 data that the browser
+// can play progressively via <audio src="...">. Audio elements natively
+// stream MP3 data without client-side buffering.
+app.get('/api/ai/tts', async (req, res) => {
+  const { text, voice, rate, pitch, volume } = req.query || {};
+  if (!text) return res.status(400).send('text query parameter required');
+  // Delegate to the POST handler's logic by rewriting the request.
+  req.body = { text, voice, rate, pitch, volume };
+  // We can't call app.handle directly from here, so duplicate the minimum.
+  const settings = loadSettingsSafe();
+  let resolvedVoice = voice || settings.ttsVoice || TTS_VOICE_PRESETS.ava;
+  if (TTS_VOICE_PRESETS[String(resolvedVoice).toLowerCase()]) {
+    resolvedVoice = TTS_VOICE_PRESETS[String(resolvedVoice).toLowerCase()];
+  }
+  const prosody = {};
+  const r = sanitizeProsody(rate ?? settings.ttsRate);
+  const p = sanitizeProsody(pitch ?? settings.ttsPitch);
+  const v = sanitizeProsody(volume ?? settings.ttsVolume);
+  if (r !== undefined) prosody.rate = r;
+  if (p !== undefined) prosody.pitch = p;
+  if (v !== undefined) prosody.volume = v;
+  try {
+    const tts = new MsEdgeTTS();
+    await tts.setMetadata(resolvedVoice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
+    const safe = escapeSsmlText(text);
+    const { audioStream } = Object.keys(prosody).length
+      ? await tts.toStream(safe, prosody)
+      : await tts.toStream(safe);
+    res.setHeader('Content-Type', 'audio/mpeg');
+    res.setHeader('Cache-Control', 'no-store');
+    audioStream.pipe(res);
+  } catch (err) {
+    console.error('Edge TTS error:', err);
+    res.status(500).send('TTS generation failed');
+  }
+});
+
 // =====================================================================
 // 7. Universal AI Provider Proxy (HTTP fallback for non-Live mode)
 // v1.2.0: supports a providerChain for automatic fallback. API keys are
