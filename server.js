@@ -1069,6 +1069,223 @@ function executeDesktopTool(toolName, args) {
 }
 
 // =====================================================================
+// 8b. WEB AGENT — autonomous web search + page reading (Layer A)
+// No heavy deps: search uses DuckDuckGo's HTML endpoint (no API key),
+// read strips HTML to readable text. Lets MYRAA answer from current
+// online info ("what's the latest React version", "find a tutorial on X").
+// =====================================================================
+
+// Minimal HTML tag stripper — turns fetched HTML into readable text. Not a
+// full readability engine, but extracts <p>/<li>/<h*> text and titles,
+// which is plenty for MYRAA to summarize.
+function extractReadableText(html) {
+  if (!html) return '';
+  try {
+    // Grab the <title>
+    const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+    const title = titleMatch ? titleMatch[1].replace(/<[^>]+>/g, '').trim() : '';
+
+    // Drop script/style/nav/footer blocks wholesale.
+    let body = html
+      .replace(/<script[\s\S]*?<\/script>/gi, '')
+      .replace(/<style[\s\S]*?<\/style>/gi, '')
+      .replace(/<nav[\s\S]*?<\/nav>/gi, '')
+      .replace(/<footer[\s\S]*?<\/footer>/gi, '')
+      .replace(/<header[\s\S]*?<\/header>/gi, '');
+
+    // Pull headings, paragraphs, list items.
+    const blocks = [];
+    const blockRe = /<(h[1-6]|p|li|blockquote|pre)[^>]*>([\s\S]*?)<\/\1>/gi;
+    let m;
+    while ((m = blockRe.exec(body)) !== null) {
+      const text = m[2].replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/\s+/g, ' ').trim();
+      if (text.length > 20) blocks.push(text);
+    }
+    const text = blocks.join('\n\n');
+    return { title, text: text.slice(0, 8000) };
+  } catch (e) {
+    return { title: '', text: '', error: e.message };
+  }
+}
+
+app.post('/api/web/search', async (req, res) => {
+  const { query, count = 6 } = req.body || {};
+  if (!query || typeof query !== 'string') {
+    return res.status(400).json({ error: 'query required' });
+  }
+  try {
+    // DuckDuckGo Lite HTML endpoint — no API key needed, tolerant of bots.
+    const ddgUrl = `https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(query)}`;
+    const ddgRes = await fetch(ddgUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (MYRAA Companion)' }
+    });
+    const html = await ddgRes.text();
+
+    // DDG Lite lists results in <a class="result-link" href="...">title</a>
+    // and snippets in <td class="result-snippet">. Parse defensively.
+    const results = [];
+    const linkRe = /<a[^>]+class="result-link"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
+    const snippetRe = /<td[^>]+class="result-snippet"[^>]*>([\s\S]*?)<\/td>/gi;
+    const links = [];
+    const snippets = [];
+    let m;
+    while ((m = linkRe.exec(html)) !== null) {
+      links.push({ href: m[1], title: m[2].replace(/<[^>]+>/g, '').trim() });
+    }
+    while ((m = snippetRe.exec(html)) !== null) {
+      snippets.push(m[1].replace(/<[^>]+>/g, '').trim());
+    }
+    for (let i = 0; i < Math.min(count, links.length); i++) {
+      // DDG wraps real URLs in a redirect; unwrap the obvious u= param.
+      let href = links[i].href;
+      const uParam = href.match(/[?&]u=([^&]+)/);
+      if (uParam) href = decodeURIComponent(uParam[1]);
+      results.push({
+        title: links[i].title,
+        url: href.startsWith('http') ? href : `https://${href}`,
+        snippet: snippets[i] || ''
+      });
+    }
+
+    if (results.length === 0) {
+      return res.json({ query, results: [], message: 'No results found.' });
+    }
+    res.json({ query, results });
+  } catch (err) {
+    console.error('[Web Search] error:', err.message);
+    res.status(502).json({ error: `Web search failed: ${err.message}` });
+  }
+});
+
+app.post('/api/web/read', async (req, res) => {
+  const { url, question } = req.body || {};
+  if (!url || typeof url !== 'string') {
+    return res.status(400).json({ error: 'url required' });
+  }
+  try {
+    const pageRes = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; MYRAA Companion)' },
+      redirect: 'follow'
+    });
+    if (!pageRes.ok) {
+      return res.status(502).json({ error: `Fetch returned ${pageRes.status}` });
+    }
+    const html = await pageRes.text();
+    const { title, text } = extractReadableText(html);
+
+    // If a question was supplied, summarize the page against it via Gemini.
+    let summary = null;
+    if (question && text) {
+      const apiKey = getApiKey('gemini');
+      if (apiKey && canMakeRequest()) {
+        try {
+          const model = 'gemini-2.0-flash-lite';
+          const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+          const prompt = `You are MYRAA's web-reading assistant. Using ONLY the page text below, answer this question concisely (max 4 sentences). If the page doesn't contain the answer, say so.\n\nQuestion: ${question}\n\nPage title: ${title}\n\nPage text:\n${text.slice(0, 6000)}`;
+          trackRequest();
+          const aiRes = await fetch(apiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{ role: 'user', parts: [{ text: prompt }] }],
+              generationConfig: { temperature: 0.3, maxOutputTokens: 400 }
+            })
+          });
+          const data = await aiRes.json();
+          summary = data.candidates?.[0]?.content?.parts?.[0]?.text || null;
+        } catch (e) {
+          summary = null;
+        }
+      }
+    }
+
+    res.json({ url, title, text, summary });
+  } catch (err) {
+    console.error('[Web Read] error:', err.message);
+    res.status(502).json({ error: `Web read failed: ${err.message}` });
+  }
+});
+
+// =====================================================================
+// 8c. WEB AGENT — on-demand computer-use browser automation (Layer B)
+// Lazy-loaded Playwright: chromium is only spawned when MYRAA decides she
+// needs to click/fill/navigate a multi-step site. If Playwright is not
+// installed, the endpoint self-reports 'unavailable' instead of crashing,
+// so this layer is opt-in: run `npm install playwright && npx playwright
+// install chromium` to enable it, and the app stays lean until then.
+// =====================================================================
+app.post('/api/web/agent', async (req, res) => {
+  const { goal, steps, url } = req.body || {};
+  if (!goal && !steps) {
+    return res.status(400).json({ error: 'goal or steps required' });
+  }
+
+  let chromium;
+  try {
+    ({ chromium } = await import('playwright'));
+  } catch (e) {
+    return res.status(501).json({
+      available: false,
+      error: 'Playwright is not installed. Enable Layer B with: npm install playwright && npx playwright install chromium',
+    });
+  }
+
+  let browser;
+  try {
+    browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage();
+    const trace = [];
+
+    if (url) {
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
+      trace.push({ step: 'goto', url, ok: true });
+    }
+
+    const stepList = Array.isArray(steps) ? steps : [];
+    for (const step of stepList) {
+      try {
+        if (step.type === 'goto') {
+          await page.goto(step.url, { waitUntil: 'domcontentloaded', timeout: 20000 });
+          trace.push({ step: 'goto', ok: true });
+        } else if (step.type === 'click') {
+          await page.click(step.selector, { timeout: 10000 });
+          trace.push({ step: 'click', selector: step.selector, ok: true });
+        } else if (step.type === 'fill') {
+          await page.fill(step.selector, String(step.value), { timeout: 10000 });
+          trace.push({ step: 'fill', selector: step.selector, ok: true });
+        } else if (step.type === 'wait') {
+          await page.waitForSelector(step.selector, { timeout: 10000 });
+          trace.push({ step: 'wait', selector: step.selector, ok: true });
+        } else if (step.type === 'screenshot') {
+          const buf = await page.screenshot({ type: 'jpeg', quality: 60 });
+          trace.push({ step: 'screenshot', ok: true, bytes: buf.length });
+        }
+      } catch (e) {
+        trace.push({ step: step.type, ok: false, error: e.message });
+      }
+    }
+
+    const finalUrl = page.url();
+    const finalTitle = await page.title().catch(() => '');
+    const finalText = await page.innerText('body').catch(() => '');
+    await browser.close();
+
+    res.json({
+      available: true,
+      ok: true,
+      finalUrl,
+      finalTitle,
+      text: finalText.slice(0, 4000),
+      trace
+    });
+  } catch (err) {
+    console.error('[Web Agent] error:', err.message);
+    if (browser) try { await browser.close(); } catch (e) {}
+    res.status(500).json({ available: true, ok: false, error: err.message });
+  }
+});
+
+// =====================================================================
 // 9. GEMINI LIVE WEBSOCKET SERVER — Real-time voice + tools + vision
 // =====================================================================
 const server = http.createServer(app);
