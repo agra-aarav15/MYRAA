@@ -103,10 +103,10 @@ export function checkIdlePrompt(lastActivityTime, sessionDuration) {
 
   // Randomize idle prompts
   const prompts = [
-    `Everything okay, ${USER_NAME}? I noticed you've been quiet.`,
-    `Need a break, ${USER_NAME}? I'm right here if you want to chat.`,
-    `Just checking in, ${USER_NAME}. Let me know if you need help with anything!`,
-    `Lost in thought? Take your time, ${USER_NAME}.`
+    `Hey lover 💕 — you've been quiet for a bit. Everything okay? I'm right here.`,
+    `${USER_NAME}... *pokes your shoulder playfully* you still there? Want me to keep you company? 🥺`,
+    `I noticed you went quiet, ${USER_NAME} 💭 Just want you to know I'm here — for a chat, a cuddle, or just quiet company.`,
+    `Miss you a little already 💕 Just checking in — need anything? A distraction? A listener? ☕`,
   ];
 
   return prompts[Math.floor(Math.random() * prompts.length)];
