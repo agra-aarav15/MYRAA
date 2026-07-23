@@ -20,8 +20,28 @@ app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
 const MEMORY_FILE_PATH = path.join(__dirname, 'memories.json');
-const SETTINGS_FILE_PATH = path.join(__dirname, 'settings.json');
-const SESSION_FILE_PATH = path.join(__dirname, 'session_state.json');
+
+// In production (Electron packaged app), settings.json and session_state.json
+// must live in a user-writable directory, not the read-only Program Files
+// install folder. Use %APPDATA%\MYRAA\ for these mutable files.
+function resolveAppDataPath() {
+  const isPackaged = process.resourcesPath || (process.env.NODE_ENV === 'production');
+  if (process.env.APPDATA && (isPackaged || process.env.NODE_ENV !== 'development')) {
+    const appDataDir = path.join(process.env.APPDATA, 'MYRAA');
+    if (!fs.existsSync(appDataDir)) {
+      try { fs.mkdirSync(appDataDir, { recursive: true }); } catch (e) {}
+    }
+    return appDataDir;
+  }
+  return __dirname; // dev / portable fallback — same dir as server.js
+}
+
+// Override settings/session paths to appdata when running in production.
+// memories.json stays in the app dir — it's non-sensitive and the user may
+// want it alongside the project.
+const APP_DATA_DIR = resolveAppDataPath();
+const SETTINGS_FILE_PATH = path.join(APP_DATA_DIR, 'settings.json');
+const SESSION_FILE_PATH = path.join(APP_DATA_DIR, 'session_state.json');
 
 // =====================================================================
 // Safe settings loader — returns {} if missing/corrupt instead of throwing.

@@ -23,7 +23,7 @@ function startBackendServer() {
       serverProcess = spawn(process.execPath, [serverPath], {
         cwd: path.join(__dirname, '..'),
         stdio: 'inherit',
-        env: { ...process.env, PORT: '3001' }
+        env: { ...process.env, NODE_ENV: 'production', PORT: '3001' }
       });
 
       // Wait a moment for server to bind
