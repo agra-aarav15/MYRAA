@@ -26,6 +26,23 @@ export default function SettingsModal({ isOpen, onClose, onOpenMemory }) {
         .then(res => res.json())
         .then(data => setSystemHealth(data))
         .catch(() => {});
+
+      // Fetch server-side API keys and merge into config so the UI shows
+      // whatever was saved via settings.json (not just localStorage).
+      fetch(`http://${host}:3001/api/settings/apikeys`)
+        .then(res => res.json())
+        .then(serverKeys => {
+          if (serverKeys && typeof serverKeys === 'object') {
+            setConfig(prev => ({
+              ...prev,
+              geminiKey: serverKeys.gemini || prev.geminiKey || '',
+              groqKey: serverKeys.groq || prev.groqKey || '',
+              openrouterKey: serverKeys.openrouter || prev.openrouterKey || '',
+              opencodeKey: serverKeys.opencode || prev.opencodeKey || '',
+            }));
+          }
+        })
+        .catch(() => {});
     }
   }, [isOpen]);
 
@@ -33,6 +50,28 @@ export default function SettingsModal({ isOpen, onClose, onOpenMemory }) {
 
   const handleSave = () => {
     saveAiConfig(config);
+    // Also persist API keys to the server-side settings.json so the
+    // provider proxy (/api/ai/proxy -> getApiKey()) can use them.
+    const host = window.location.hostname || 'localhost';
+    const apiKeys = {};
+    // Only send keys that are non-empty and belong to real providers.
+    const keyFields = {
+      gemini: config.geminiKey,
+      groq: config.groqKey,
+      openrouter: config.openrouterKey,
+      opencode: config.opencodeKey,
+      custom: config.customKey,
+    };
+    for (const [provider, key] of Object.entries(keyFields)) {
+      if (key && key.trim()) apiKeys[provider] = key.trim();
+    }
+    if (Object.keys(apiKeys).length > 0) {
+      fetch(`http://${host}:3001/api/settings/apikeys`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ apiKeys })
+      }).catch(() => {});
+    }
     setSavedSuccess(true);
     setTimeout(() => {
       setSavedSuccess(false);

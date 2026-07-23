@@ -604,6 +604,42 @@ app.get('/api/rate-limit', (req, res) => {
   res.json(getRateLimitStatus());
 });
 
+// =====================================================================
+// Settings API keys — read & write from frontend
+// (v1.2.0 addition: keys live in server-side settings.json, not
+// in the client bundle, but the SettingsModal needs a way to
+// persist them from the UI.)
+// =====================================================================
+app.get('/api/settings/apikeys', (req, res) => {
+  try {
+    const settings = loadSettingsSafe();
+    res.json(settings.apiKeys || {});
+  } catch (err) {
+    res.json({});
+  }
+});
+
+app.post('/api/settings/apikeys', (req, res) => {
+  try {
+    const { apiKeys } = req.body || {};
+    if (!apiKeys || typeof apiKeys !== 'object') {
+      return res.status(400).json({ error: 'apiKeys object required' });
+    }
+    // Merge into existing settings so we don't lose other keys (TTS, etc.)
+    let settings = loadSettingsSafe();
+    settings.apiKeys = { ...(settings.apiKeys || {}), ...apiKeys };
+    // Prune any keys with empty values.
+    for (const k of Object.keys(settings.apiKeys)) {
+      if (!settings.apiKeys[k]) delete settings.apiKeys[k];
+    }
+    fs.writeFileSync(SETTINGS_FILE_PATH, JSON.stringify(settings, null, 2), 'utf8');
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[Settings] Failed to save API keys:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Manual / Proxy memory consolidation
 app.post('/api/memory/consolidate', async (req, res) => {
   const { apiKey, dialogueHistory } = req.body;
