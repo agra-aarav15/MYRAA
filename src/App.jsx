@@ -434,7 +434,35 @@ export default function App() {
       }
     }
 
-    // Topic-based mood events (never fired before — focus/curiosity stayed flat).
+    // Autonomous web search: detect queries that need current info and
+    // pre-fetch results so MYRAA can answer from live data.
+    let webContext = '';
+    const needsWebInfo = /\b(what.?.?.?s |what is |latest |current |find |search |how do |how to |news |who is |define |explain |tell me about )/i;
+    if (needsWebInfo.test(textToSend) && !/(?:open|play|volume|mute)\s/i.test(textToSend)) {
+      try {
+        const host = window?.location?.hostname || 'localhost';
+        const webRes = await fetch(`http://${host}:3001/api/web/search`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: textToSend.slice(0, 200), count: 4 })
+        });
+        if (webRes.ok) {
+          const webData = await webRes.json();
+          if (webData.results && webData.results.length > 0) {
+            webContext =
+              '\n\n[RECENT WEB SEARCH RESULTS \u2014 use these to answer if relevant]\n' +
+              webData.results.map(r =>
+                '- ' + r.title + ': ' + r.url + '\n  ' + (r.snippet || '')
+              ).join('\n') +
+              '\n[END WEB RESULTS]';
+          }
+        }
+      } catch (e) {
+        // Search unavailable \u2014 continue silently.
+      }
+    }
+
+    // Topic-based mood events
     const lower = textToSend.toLowerCase();
     if (/\b(code|bug|api|server|deploy|bugfix|refactor|typescript|react|vite)\b/.test(lower)) {
       updateMood('work_topic', { text: textToSend });
@@ -492,7 +520,11 @@ export default function App() {
 
     try {
       const history = messagesRef.current.map(m => ({ role: m.role, content: m.content }));
-      const rawAiReply = await sendAiChatMessage(textToSend, history, screenToUse);
+      // If autonomous web search fetched results, append them to the
+      // user message so the AI can answer from current info. Don't show
+      // the raw context in the transcript — that's internal.
+      const augMsg = webContext ? textToSend + webContext : textToSend;
+      const rawAiReply = await sendAiChatMessage(augMsg, history, screenToUse);
       const { text: sanitizedReply, emotion } = extractEmotion(cleanAiResponseText(rawAiReply));
 
       // Tool commands the AI itself decided to invoke.
