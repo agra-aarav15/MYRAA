@@ -206,6 +206,20 @@ export default function App() {
     return () => clearInterval(timer);
   }, [lastActivityTime, sessionStartTime, isProcessing, isSpeaking, isAutoSpeak, liveStatus]);
 
+  const triggerTopicMoodEvents = (text) => {
+    if (!text || typeof text !== 'string') return;
+    const lower = text.toLowerCase();
+    if (/\b(code|bug|api|server|deploy|bugfix|refactor|typescript|react|vite)\b/.test(lower)) {
+      updateMood('work_topic', { text });
+    } else if (/\b(feel|love|miss|tired|stressed|how are you|about you|us)\b/.test(lower)) {
+      updateMood('personal_topic', { text });
+    } else if (/\b(interesting|new|curious|wonder|what if|have you heard)\b/.test(lower)) {
+      updateMood('new_interest', { text });
+    }
+    updateMood('message_sent', { text });
+    refreshMood();
+  };
+
   // =====================================================================
   // 2. Initialize Gemini Live Voice WebSocket Engine
   // =====================================================================
@@ -245,8 +259,7 @@ export default function App() {
             timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
           }]);
           setAvatarExpression('listening');
-          updateMood('message_sent', { text });
-          refreshMood();
+          triggerTopicMoodEvents(text);
 	        } else if (role === 'model') {
 	          const { text: cleanText, emotion } = extractEmotion(text);
 	          executeDirectCommand(cleanText).then(toolResults => {
@@ -462,22 +475,11 @@ export default function App() {
       }
     }
 
-    // Topic-based mood events
-    const lower = textToSend.toLowerCase();
-    if (/\b(code|bug|api|server|deploy|bugfix|refactor|typescript|react|vite)\b/.test(lower)) {
-      updateMood('work_topic', { text: textToSend });
-    } else if (/\b(feel|love|miss|tired|stressed|how are you|about you|us)\b/.test(lower)) {
-      updateMood('personal_topic', { text: textToSend });
-    } else if (/\b(interesting|new|curious|wonder|what if|have you heard)\b/.test(lower)) {
-      updateMood('new_interest', { text: textToSend });
-    }
+    // Topic-based mood events & user interaction updates
+    triggerTopicMoodEvents(textToSend);
 
     const screenToUse = screenshot || attachedScreenshot || (isContinuousVision ? latestCapturedFrameRef.current : null);
     setLastActivityTime(Date.now());
-
-    // Update mood for user interaction + push to AI prompt context.
-    updateMood('message_sent', { text: textToSend });
-    refreshMood();
 
     // If connected to Gemini Live WebSocket, send via WebSocket
     if (liveEngineRef.current && liveStatus === 'connected') {
@@ -524,7 +526,52 @@ export default function App() {
       // user message so the AI can answer from current info. Don't show
       // the raw context in the transcript — that's internal.
       const augMsg = webContext ? textToSend + webContext : textToSend;
-      const rawAiReply = await sendAiChatMessage(augMsg, history, screenToUse);
+      let rawAiReply = await sendAiChatMessage(augMsg, history, screenToUse);
+
+      // Check for mid-conversation LLM tool calls ([tool:search], [tool:read_web], etc.)
+      if (/\[tool:\w+\]/i.test(rawAiReply)) {
+        const host = window?.location?.hostname || 'localhost';
+        const toolMatch = rawAiReply.match(/\[tool:(\w+)\]([\s\S]*?)\[\/tool\]/i);
+        if (toolMatch) {
+          const toolType = toolMatch[1].toLowerCase();
+          const toolArg = toolMatch[2].trim();
+          let toolResultText = '';
+
+          if (toolType === 'search') {
+            try {
+              const res = await fetch(`http://${host}:3001/api/web/search`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ query: toolArg, count: 5 })
+              });
+              const data = await res.json();
+              if (data.results && data.results.length > 0) {
+                toolResultText = `[TOOL RESULT FOR SEARCH "${toolArg}"]:\n` +
+                  data.results.map(r => `- ${r.title}: ${r.snippet}`).join('\n');
+              }
+            } catch (e) {}
+          } else if (toolType === 'read_web') {
+            try {
+              const res = await fetch(`http://${host}:3001/api/web/read`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url: toolArg })
+              });
+              const data = await res.json();
+              if (data.summary || data.text) {
+                toolResultText = `[TOOL RESULT FOR READ WEB "${toolArg}"]:\n${data.summary || data.text}`;
+              }
+            } catch (e) {}
+          }
+
+          if (toolResultText) {
+            const intermediateText = rawAiReply.replace(/\[tool:\w+\][\s\S]*?\[\/tool\]/gi, '').trim();
+            const nextHistory = [...history, { role: 'assistant', content: intermediateText || 'Let me look that up for you!' }];
+            rawAiReply = await sendAiChatMessage(toolResultText, nextHistory, screenToUse);
+          }
+        }
+      }
+
       const { text: sanitizedReply, emotion } = extractEmotion(cleanAiResponseText(rawAiReply));
 
       // Tool commands the AI itself decided to invoke.
