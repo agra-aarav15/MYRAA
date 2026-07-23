@@ -19,6 +19,12 @@ const PORT = process.env.PORT || 3001;
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
+// Serve compiled static production web app from dist/ if present
+const DIST_PATH = path.join(__dirname, 'dist');
+if (fs.existsSync(DIST_PATH)) {
+  app.use(express.static(DIST_PATH));
+}
+
 const MEMORY_FILE_PATH = path.join(__dirname, 'memories.json');
 
 // In production (Electron packaged app), settings.json and session_state.json
@@ -1709,12 +1715,22 @@ function setupTextModeHandler(clientWs) {
   });
 }
 
+// Serve SPA index.html fallback for production build
+if (fs.existsSync(DIST_PATH)) {
+  app.use((req, res, next) => {
+    if (req.method !== 'GET') return next();
+    if (req.path.startsWith('/api') || req.path.startsWith('/live')) return next();
+    res.sendFile(path.join(DIST_PATH, 'index.html'));
+  });
+}
+
 // =====================================================================
 // START SERVER
 // =====================================================================
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`✨ MYRAA Backend + Live Voice Server running on http://0.0.0.0:${PORT}`);
-  console.log(`   WebSocket Live endpoint: ws://0.0.0.0:${PORT}/live`);
+  console.log(`✨ MYRAA Production Host Server running on http://localhost:${PORT}`);
+  console.log(`   Unified Web App & API endpoint: http://localhost:${PORT}`);
+  console.log(`   WebSocket Live endpoint: ws://localhost:${PORT}/live`);
   console.log(`   Rate limits: ${RATE_LIMITS.maxRequestsPerMinute} RPM, ${RATE_LIMITS.maxRequestsPerDay} RPD`);
   logStartup();
 });
