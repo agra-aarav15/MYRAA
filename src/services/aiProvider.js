@@ -357,10 +357,14 @@ export async function sendAiChatMessage(userMessage, conversationHistory = [], s
       })
     });
 
+    if (response.status === 429) {
+      // All providers in the chain hit rate limits.
+      return `[emotion:shy] Ugh, every provider I tried is rate-limited right now, babe. Give me like a minute and try again? 💕`;
+    }
+
     if (!response.ok) {
       const data = await response.json().catch(() => ({}));
-      console.warn('[aiProvider] HTTP error from server proxy:', response.status, data);
-      return simulateMyraaResponse(userMessage, screenshotData);
+      throw new Error(data.error || `AI request failed (${response.status})`);
     }
 
     const data = await response.json();

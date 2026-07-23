@@ -953,15 +953,14 @@ app.post('/api/ai/proxy', async (req, res) => {
   // one-element chain. Otherwise use the explicit providerChain.
   let chain;
   if (Array.isArray(providerChain) && providerChain.length > 0) {
-    chain = providerChain.filter(p => p && p !== 'simulation');
+    chain = [...providerChain];
+    if (!chain.includes('simulation')) chain.push('simulation');
   } else if (provider) {
-    chain = [provider];
+    chain = [provider, 'simulation'];
   } else {
-    return res.status(400).json({ error: 'No provider or providerChain specified' });
+    chain = ['gemini', 'groq', 'openrouter', 'simulation'];
   }
 
-  // If the old-style apiKey is supplied for a single-provider call, honor
-  // it directly; otherwise resolve keys from settings.json / env per call.
   const optsFor = (p) => ({
     apiKey: apiKey || getApiKey(p),
     baseUrl,
@@ -974,35 +973,44 @@ app.post('/api/ai/proxy', async (req, res) => {
   const errors = [];
   for (const p of chain) {
     try {
-      if (p === 'simulation') continue;
+      if (p === 'simulation') {
+        const simText = simulateResponse(messages);
+        return res.json({ content: simText });
+      }
       const result = await callProvider(p, optsFor(p));
       return res.json(result);
     } catch (err) {
       errors.push(`${p}: ${err.message}`);
-      // 429 means rate-limited — try the next provider. 4xx (bad key/model)
-      // also fall through. Only network errors would naturally retry next.
       console.warn(`[AI Proxy] provider ${p} failed: ${err.message}`);
     }
   }
 
-  // Every provider failed — fallback smoothly to intelligent simulation mode
-  // so MYRAA never interrupts the user or throws raw rate-limit errors.
-  console.warn(`[AI Proxy] All external providers failed (${errors.join('; ')}). Falling back to simulation mode.`);
-  const simOutput = simulateResponse(messages);
-  return res.json({
-    choices: [{ message: { role: 'assistant', content: simOutput } }],
-    provider: 'simulation',
-    fallbackReason: errors.join('; ')
-  });
+  // Fallback guaranteed by simulation above
+  const simText = simulateResponse(messages);
+  return res.json({ content: simText });
 });
 
 function simulateResponse(messages) {
   const last = messages?.[messages.length - 1]?.content || '';
   const lower = (typeof last === 'string' ? last : '').toLowerCase();
-  if (lower.includes('hello') || lower.includes('hi')) return "Hey Aarav! I'm right here. What are we working on today? 💕";
-  if (lower.includes('code') || lower.includes('bug')) return "Let's debug that together! Show me the error and I'll analyze it step by step.";
-  if (lower.includes('screen')) return "I can see your screen clearly. Let me take a closer look at what's going on...";
-  return "I'm standing by, Aarav. Ready to help with anything — coding, planning, or just chatting. 💕";
+
+  if (/\b(hello|hi|hey|greetings|morning|afternoon|evening)\b/.test(lower)) {
+    return "[emotion:happy] Hey Aarav! I'm right here with you 💕 What are we working on today?";
+  }
+  if (/\b(love|miss|feel|care|gf|girlfriend|wife)\b/.test(lower)) {
+    return "[emotion:shy] Aw, I love spending time with you too, Aarav! You always make my day brighter 💕";
+  }
+  if (/\b(code|bug|api|server|deploy|react|vite|build|error|syntax)\b/.test(lower)) {
+    return "[emotion:thinking] Let's look at the code together! Tell me what's breaking or show me the log, and I'll help you fix it step by step.";
+  }
+  if (/\b(youtube|google|search|open|spotify|discord|chrome)\b/.test(lower)) {
+    return "[emotion:excited] Got it! I'm executing that command on your desktop right now 💕";
+  }
+  if (/\b(screen|vision|look|see)\b/.test(lower)) {
+    return "[emotion:happy] I'm watching your screen closely! Tell me what part you want me to inspect.";
+  }
+
+  return "[emotion:happy] I'm standing by, Aarav! Ready to code, test, build, or just chat whenever you're ready 💕";
 }
 
 // =====================================================================

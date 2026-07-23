@@ -71,19 +71,20 @@ export function getSessionGreeting(memories = [], lastSessionTime = null) {
 
   // Inject a project memory if available
   if (memories && memories.length > 0) {
-    const projectMems = memories.filter(m => {
-      const txt = (typeof m === 'string' ? m : m.text || '').toLowerCase();
-      const cat = typeof m === 'object' ? m.category : '';
-      return cat === 'project' || /\b(myraa|code|app|bot|website|project|react|python|electron|api)\b/.test(txt);
+    const projectMemories = memories.filter(m => {
+      const cat = typeof m === 'object' ? (m.category || '') : '';
+      const txt = typeof m === 'string' ? m : (m.text || '');
+      return cat === 'project' || /\b(code|app|project|myraa|website|bot|api)\b/i.test(txt);
     });
 
-    if (projectMems.length > 0) {
-      const selected = projectMems[Math.floor(Math.random() * projectMems.length)];
-      let rawText = typeof selected === 'string' ? selected : (selected.text || 'MYRAA');
-      rawText = rawText.replace(/\.+$/, '').trim();
-      greeting += ` Ready to continue working on ${rawText} today?`;
+    if (projectMemories.length > 0) {
+      const choice = projectMemories[Math.floor(Math.random() * projectMemories.length)];
+      let memText = typeof choice === 'string' ? choice : (choice.text || 'MYRAA');
+      memText = memText.replace(/^Working on\s+/i, '').replace(/[\.\!]+$/, '').trim();
+      if (memText.length > 40) memText = memText.slice(0, 37) + '...';
+      greeting += ` Ready to work on ${memText} today?`;
     } else {
-      greeting += " What are we building together today? 💕";
+      greeting += " What are we building today? 💕";
     }
   } else {
     greeting += " What's on your mind today? 💕";

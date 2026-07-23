@@ -201,17 +201,19 @@ export default function AvatarCanvas({
 
       model.traverse((child) => {
         if (child.isMesh) {
-          // Hide orphan white background/eyelid card planes that block eyes and head
-          if (child.name.startsWith('Plane')) {
+          // Hide orphan background/white highlight planes that block face and cause horns/white eyes
+          const meshName = (child.name || '').toLowerCase();
+          if (meshName.includes('plane')) {
             child.visible = false;
           }
+
           if (child.material) {
-            child.material.needsUpdate = true;
+            // Enable clean alpha testing so eyes and hair render full color textures without white blockages
+            child.material.transparent = true;
+            child.material.alphaTest = 0.05;
             child.material.depthWrite = true;
-            if (child.material.map) {
-              child.material.transparent = true;
-              child.material.alphaTest = 0.05;
-            }
+            child.material.side = THREE.DoubleSide;
+            child.material.needsUpdate = true;
           }
         }
       });
