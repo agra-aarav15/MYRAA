@@ -664,7 +664,10 @@ export default function App() {
         setIsListening(false);
         speechRecognitionRef.current = null;
         if (finalTranscript && finalTranscript.trim()) {
-          executeDirectCommand(finalTranscript);
+          // NOTE: do NOT call executeDirectCommand here — handleSendMessage
+          // already runs it internally (line ~419). Calling it twice would
+          // double-execute every command ("open notepad" would open two
+          // windows). Just hand the transcript to handleSendMessage.
           handleSendMessage(finalTranscript);
         }
         // Auto-restart listening after a brief pause (waits for Myraa to finish processing and speaking)
