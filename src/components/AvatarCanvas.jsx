@@ -200,8 +200,19 @@ export default function AvatarCanvas({
       });
 
       model.traverse((child) => {
-        if (child.isMesh && child.material) {
-          child.material.needsUpdate = true;
+        if (child.isMesh) {
+          // Hide orphan white background/eyelid card planes that block eyes and head
+          if (child.name.startsWith('Plane')) {
+            child.visible = false;
+          }
+          if (child.material) {
+            child.material.needsUpdate = true;
+            child.material.depthWrite = true;
+            if (child.material.map) {
+              child.material.transparent = true;
+              child.material.alphaTest = 0.05;
+            }
+          }
         }
       });
 

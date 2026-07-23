@@ -69,14 +69,24 @@ export function getSessionGreeting(memories = [], lastSessionTime = null) {
     }
   }
 
-  // Inject a memory if available
+  // Inject a project memory if available
   if (memories && memories.length > 0) {
-    // Pick a random memory to ask about
-    const randomMemory = memories[Math.floor(Math.random() * memories.length)];
-    const memText = typeof randomMemory === 'string' ? randomMemory : (randomMemory.text || 'our projects');
-    greeting += ` Are we working on ${memText} today?`;
+    const projectMems = memories.filter(m => {
+      const txt = (typeof m === 'string' ? m : m.text || '').toLowerCase();
+      const cat = typeof m === 'object' ? m.category : '';
+      return cat === 'project' || /\b(myraa|code|app|bot|website|project|react|python|electron|api)\b/.test(txt);
+    });
+
+    if (projectMems.length > 0) {
+      const selected = projectMems[Math.floor(Math.random() * projectMems.length)];
+      let rawText = typeof selected === 'string' ? selected : (selected.text || 'MYRAA');
+      rawText = rawText.replace(/\.+$/, '').trim();
+      greeting += ` Ready to continue working on ${rawText} today?`;
+    } else {
+      greeting += " What are we building together today? 💕";
+    }
   } else {
-    greeting += " What's on your mind today?";
+    greeting += " What's on your mind today? 💕";
   }
 
   return greeting;

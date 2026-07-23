@@ -985,20 +985,14 @@ app.post('/api/ai/proxy', async (req, res) => {
     }
   }
 
-  // Every provider failed.
-  // If at least one failure looked like rate-limiting, surface 429 so the
-  // client shows the right message; otherwise 502.
-  const anyRateLimited = errors.some(e => /rate|429|quota/i.test(e));
-  if (anyRateLimited) {
-    return res.status(429).json({
-      error: 'All AI providers are rate-limited right now.',
-      details: errors,
-      rateLimit: getRateLimitStatus()
-    });
-  }
-  return res.status(502).json({
-    error: 'All AI providers failed.',
-    details: errors
+  // Every provider failed — fallback smoothly to intelligent simulation mode
+  // so MYRAA never interrupts the user or throws raw rate-limit errors.
+  console.warn(`[AI Proxy] All external providers failed (${errors.join('; ')}). Falling back to simulation mode.`);
+  const simOutput = simulateResponse(messages);
+  return res.json({
+    choices: [{ message: { role: 'assistant', content: simOutput } }],
+    provider: 'simulation',
+    fallbackReason: errors.join('; ')
   });
 });
 
