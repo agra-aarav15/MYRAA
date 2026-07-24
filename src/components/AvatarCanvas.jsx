@@ -370,7 +370,7 @@ export default function AvatarCanvas({
           blinkValue = Math.sin(blinkPhase);
         }
       }
-      blendMorph(['Blink L', 'Blinl R', 'Blink R'], blinkValue, 0.8, dt);
+      blendMorph(['Blink L', 'Blink R'], blinkValue, 0.8, dt);
 
       // --- Idle Variation ---
       if (t > nextIdleShiftTime) {
@@ -551,30 +551,25 @@ export default function AvatarCanvas({
         bones.neck.rotation.y = lerp(bones.neck.rotation.y, targetHeadY * 0.3, 0.03);
       }
 
-      // --- 3. EYE TRACKING + SACCADES ---
-      // v1.2.0: humans don't hold a perfectly smooth gaze — they make
-      // tiny fast saccades (jitter) every few hundred ms. We layer those
-      // on top of the mouse-follow target so the eyes feel alive even
-      // when the mouse is still.
+      // --- 3. EYE TRACKING & SMOOTH GAZE ---
       if (t > nextSaccadeTime) {
         saccadeTarget = {
-          x: (Math.random() - 0.5) * 0.06,
-          y: (Math.random() - 0.5) * 0.06
+          x: (Math.random() - 0.5) * 0.03,
+          y: (Math.random() - 0.5) * 0.03
         };
-        const saccadeDur = 0.08 + Math.random() * 0.12;       // 80-200ms flick
+        const saccadeDur = 0.3 + Math.random() * 0.3;
         saccadeUntil = t + saccadeDur;
-        nextSaccadeTime = t + 0.4 + Math.random() * 1.5;     // next in 0.4-1.9s
+        nextSaccadeTime = t + 2.0 + Math.random() * 2.5;
       }
-      const saccadeBlend = (t < saccadeUntil) ? 1 : 0;
-      const targetEyeY = mouseRef.current.x * 0.15 * trackFactor + poseState.eyeL.y + saccadeTarget.y * saccadeBlend;
-      const targetEyeX = -mouseRef.current.y * 0.1 * trackFactor + poseState.eyeL.x + saccadeTarget.x * saccadeBlend;
+      const targetEyeY = mouseRef.current.x * 0.12 * trackFactor + poseState.eyeL.y + saccadeTarget.y;
+      const targetEyeX = -mouseRef.current.y * 0.08 * trackFactor + poseState.eyeL.x + saccadeTarget.x;
       if (bones.eyeL) {
-        bones.eyeL.rotation.y = lerp(bones.eyeL.rotation.y, targetEyeY, 0.08);
-        bones.eyeL.rotation.x = lerp(bones.eyeL.rotation.x, targetEyeX, 0.12);
+        bones.eyeL.rotation.y = lerp(bones.eyeL.rotation.y, targetEyeY, 0.04);
+        bones.eyeL.rotation.x = lerp(bones.eyeL.rotation.x, targetEyeX, 0.04);
       }
       if (bones.eyeR) {
-        bones.eyeR.rotation.y = lerp(bones.eyeR.rotation.y, targetEyeY, 0.08);
-        bones.eyeR.rotation.x = lerp(bones.eyeR.rotation.x, targetEyeX, 0.12);
+        bones.eyeR.rotation.y = lerp(bones.eyeR.rotation.y, targetEyeY, 0.04);
+        bones.eyeR.rotation.x = lerp(bones.eyeR.rotation.x, targetEyeX, 0.04);
       }
 
       // --- 4. SHOULDERS & ARMS ---

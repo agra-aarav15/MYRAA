@@ -650,7 +650,7 @@ export default function App() {
     // browser speechSynthesis.
     const backendHost = window?.location?.hostname || 'localhost';
     try {
-      const ttsUrl = `http://${backendHost}:3001/api/ai/tts?text=${encodeURIComponent(cleanText)}&voice=en-US-AvaNeural&rate=${encodeURIComponent('+0%')}&pitch=${encodeURIComponent('-2%')}&volume=${encodeURIComponent('+0%')}`;
+      const ttsUrl = `http://${backendHost}:3001/api/ai/tts?text=${encodeURIComponent(cleanText)}&voice=en-US-JennyNeural&rate=${encodeURIComponent('+0%')}&pitch=${encodeURIComponent('+0%')}&volume=${encodeURIComponent('+0%')}`;
       const audio = new Audio(ttsUrl);
       neuralAudioRef.current = audio;
 
@@ -728,16 +728,32 @@ export default function App() {
       rec.interimResults = true;
       rec.lang = 'en-US';
       let finalTranscript = '';
+      let silenceTimer = null;
       rec.onstart = () => setIsListening(true);
       rec.onresult = (event) => {
+        if (silenceTimer) clearTimeout(silenceTimer);
         let transcript = '';
+        let hasFinal = false;
         for (let i = event.resultIndex; i < event.results.length; ++i) {
           transcript += event.results[i][0].transcript;
           if (event.results[i].isFinal) {
             finalTranscript = event.results[i][0].transcript;
+            hasFinal = true;
           }
         }
         setInputText(transcript);
+        if (transcript.trim()) {
+          finalTranscript = transcript.trim();
+        }
+
+        // Fast 650ms silence auto-commit so speech is submitted instantly when you pause
+        if (hasFinal) {
+          try { rec.stop(); } catch(e) {}
+        } else {
+          silenceTimer = setTimeout(() => {
+            try { rec.stop(); } catch(e) {}
+          }, 650);
+        }
       };
       rec.onend = () => {
         setIsListening(false);

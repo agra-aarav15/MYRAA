@@ -805,9 +805,9 @@ app.post('/api/ai/tts', async (req, res) => {
   let { text, voice, rate, pitch, volume } = req.body || {};
   if (!text) return res.status(400).json({ error: 'Text required' });
 
-  // Resolve voice: explicit ID > preset name > settings.json default > Ava.
+  // Resolve voice: explicit ID > preset name > settings.json default > Jenny.
   const settings = loadSettingsSafe();
-  let resolvedVoice = voice || settings.ttsVoice || TTS_VOICE_PRESETS.ava;
+  let resolvedVoice = voice || settings.ttsVoice || TTS_VOICE_PRESETS.jenny;
   if (TTS_VOICE_PRESETS[String(resolvedVoice).toLowerCase()]) {
     resolvedVoice = TTS_VOICE_PRESETS[String(resolvedVoice).toLowerCase()];
   }
