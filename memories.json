@@ -16,5 +16,89 @@
     "category": "project",
     "text": "Building MYRAA — a real-time AI girlfriend companion with 3D anime model, voice interaction, and desktop control.",
     "createdAt": "2026-07-19T07:12:32.417Z"
+  },
+  {
+    "id": "ut75a9264",
+    "category": "preference",
+    "text": "The user prefers to speak in Hindi.",
+    "createdAt": "2026-06-12T09:38:55.211Z",
+    "updatedAt": "2026-06-12T09:38:55.211Z"
+  },
+  {
+    "id": "g5j55e08v",
+    "category": "emotional",
+    "text": "MY GOAL IS TO BUY RTX 5090",
+    "createdAt": "2026-06-12T09:40:31.535Z",
+    "updatedAt": "2026-06-12T09:40:31.535Z"
+  },
+  {
+    "id": "4jswpmydh",
+    "category": "goal",
+    "text": "The user's goal is to buy an RTX 5090.",
+    "createdAt": "2026-06-12T10:04:35.022Z",
+    "updatedAt": "2026-06-12T10:04:35.022Z"
+  },
+  {
+    "id": "4o9wz4jio",
+    "category": "identity",
+    "text": "The user's name is Tech GPT, and they have a YouTube channel called Tech GPT where they post AI-related content.",
+    "createdAt": "2026-06-12T10:08:06.203Z",
+    "updatedAt": "2026-06-12T10:08:06.203Z"
+  },
+  {
+    "id": "7x3xlhpfz",
+    "category": "identity",
+    "text": "The user's name is Tech GPT.",
+    "createdAt": "2026-06-12T10:09:48.474Z",
+    "updatedAt": "2026-06-12T10:09:48.474Z"
+  },
+  {
+    "id": "i7aor6g19",
+    "category": "identity",
+    "text": "The user has an RX 580 graphics card with 8GB RAM, and an i3 10th generation CPU.",
+    "createdAt": "2026-06-12T10:15:36.848Z",
+    "updatedAt": "2026-06-12T10:15:36.848Z"
+  },
+  {
+    "id": "u2ss6rzer",
+    "category": "identity",
+    "text": "The user's YouTube channel is named Tech GPT and focuses on AI-related content. The user's name is also Tech GPT.",
+    "createdAt": "2026-06-12T10:16:19.450Z",
+    "updatedAt": "2026-06-12T10:16:19.450Z"
+  },
+  {
+    "id": "n6094o0w6",
+    "category": "preference",
+    "text": "Users desktop path is C:\\Users\\Admin\\Desktop\\myraa-ai-assistant",
+    "createdAt": "2026-06-19T15:01:12.086Z",
+    "updatedAt": "2026-06-19T15:01:12.086Z"
+  },
+  {
+    "id": "saydxowgq",
+    "category": "preference",
+    "text": "User's desktop path is C:\\Users\\Admin\\Desktop\\myraa-ai-assistant",
+    "createdAt": "2026-06-19T15:02:23.644Z",
+    "updatedAt": "2026-06-19T15:02:23.644Z"
+  },
+  {
+    "id": "v0gdxb5ga",
+    "category": "identity",
+    "text": "MY DESKTOP PATH IS C:\\Users\\MSI\\Desktop",
+    "createdAt": "2026-06-19T15:06:32.197Z",
+    "updatedAt": "2026-06-19T15:06:32.197Z"
+  },
+  {
+    "id": "r3q4pgghb",
+    "category": "preference",
+    "text": "TECH wants me to speak in Hindi.",
+    "createdAt": "2026-06-20T17:39:27.202Z",
+    "updatedAt": "2026-06-20T17:39:27.202Z"
+  },
+  {
+    "id": "8li0wijho",
+    "category": "emotional",
+    "text": "TECH shared that they think 'shepam' is nice which was a sweet moment during our chat.",
+    "createdAt": "2026-06-21T08:05:45.041Z",
+    "updatedAt": "2026-06-21T08:05:45.041Z"
   }
 ]

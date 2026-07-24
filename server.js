@@ -49,6 +49,79 @@ const APP_DATA_DIR = resolveAppDataPath();
 const SETTINGS_FILE_PATH = path.join(APP_DATA_DIR, 'settings.json');
 const SESSION_FILE_PATH = path.join(APP_DATA_DIR, 'session_state.json');
 
+// Logging Pipeline (best-effort)
+const LOGS_DIR = path.join(APP_DATA_DIR, 'logs');
+try { fs.mkdirSync(LOGS_DIR, { recursive: true }); } catch (e) {}
+
+function appendLog(fileName, message) {
+  try {
+    const line = `[${new Date().toISOString()}] ${message}\n`;
+    fs.appendFile(path.join(LOGS_DIR, fileName), line, () => {});
+  } catch (e) {}
+}
+const logCommand = (m) => appendLog("commands.log", m);
+const logStartup = (m) => appendLog("startup.log", m);
+const logError = (m) => appendLog("errors.log", m);
+
+// Python Desktop Agent HTTP Bridge (Port 8765)
+const DESKTOP_AGENT_URL = process.env.DESKTOP_AGENT_URL || "http://127.0.0.1:8765";
+const DESKTOP_TOOLS = new Set([
+  "openApplication", "closeApplication", "openWebsite", "searchWeb", "searchYouTube", "searchGoogle", "searchGitHub",
+  "createFile", "readFile", "renameFile", "deleteFile", "moveFile", "openFolder", "listFiles", "searchFiles",
+  "volumeUp", "volumeDown", "muteToggle", "setVolume", "requestPowerAction", "executePowerAction",
+  "minimizeWindow", "maximizeWindow", "closeWindow", "switchApplication",
+  "copySelected", "pasteClipboard", "getClipboard", "clearClipboard",
+  "takeScreenshot", "saveScreenshot", "analyzeScreenshot", "readScreen",
+  "desktopBrowserOpen", "desktopBrowserNavigate", "desktopBrowserOpenTab", "desktopBrowserCloseTab", "desktopBrowserSearch", "desktopBrowserClick", "desktopBrowserType", "desktopBrowserFillForm", "desktopBrowserGoBack", "desktopBrowserGoForward", "desktopBrowserScroll",
+  "createPythonFile", "runPythonScript", "createProjectFolder", "writeCodeFile",
+  "systemInfo", "gpuInfo", "temperatureInfo", "brightnessUp", "brightnessDown", "setBrightness",
+  "enableAutoStart", "disableAutoStart", "getAutoStartStatus"
+]);
+
+function spawnDesktopAgent() {
+  const agentScript = path.join(__dirname, 'desktop_agent', 'main.py');
+  if (!fs.existsSync(agentScript)) return;
+  try {
+    const pyCmd = process.platform === 'win32' ? 'python' : 'python3';
+    const child = exec(`"${pyCmd}" "${agentScript}"`, { cwd: path.dirname(agentScript) });
+    child.unref();
+    console.log('[DesktopAgent] Spawned Python desktop agent process.');
+    logStartup('Spawned Python desktop agent process');
+  } catch (e) {
+    console.warn('[DesktopAgent] Failed to spawn Python agent:', e.message);
+  }
+}
+
+// Categorized Memory Knowledge Card Formatter
+function formatCategorizedMemoryCore(memories) {
+  if (!memories || memories.length === 0) return '';
+  const grouped = {};
+  memories.forEach(m => {
+    const cat = m.category || 'preference';
+    grouped[cat] = grouped[cat] || [];
+    grouped[cat].push(m.text);
+  });
+
+  const categoriesOrdered = [
+    { key: "identity", label: "Identity (Name, nick, profession, channel)" },
+    { key: "preference", label: "Preferences & Tastes (Language, games, movies)" },
+    { key: "goal", label: "Active Goals & Aspirations" },
+    { key: "project", label: "Ongoing Projects & Ecosystems" },
+    { key: "relationship", label: "Key People & Relationships mentioned" },
+    { key: "emotional", label: "Emotional Highlights & Core Milestones" },
+    { key: "behavior", label: "Observed Traits & Behavioral Tendencies" },
+  ];
+
+  let block = "\n[MYRAA PERSISTENT KNOWLEDGE CARD]\n";
+  categoriesOrdered.forEach(c => {
+    const list = grouped[c.key] || [];
+    if (list.length > 0) {
+      block += `* ${c.label}:\n` + list.map(t => `  - ${t}`).join('\n') + '\n';
+    }
+  });
+  return block;
+}
+
 // =====================================================================
 // Safe settings loader — returns {} if missing/corrupt instead of throwing.
 // v1.2.0: single source of truth for settings reads (TTS, AI keys, etc.).
@@ -1734,10 +1807,10 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`   Unified Web App & API endpoint: http://localhost:${PORT}`);
   console.log(`   WebSocket Live endpoint: ws://localhost:${PORT}/live`);
   console.log(`   Rate limits: ${RATE_LIMITS.maxRequestsPerMinute} RPM, ${RATE_LIMITS.maxRequestsPerDay} RPD`);
-  logStartup();
+  logServerStartup();
 });
 
-function logStartup() {
+function logServerStartup() {
   const timestamp = new Date().toISOString();
   console.log(`[${timestamp}] Server started. PID: ${process.pid}`);
 }
