@@ -91,17 +91,14 @@ export default function AvatarCanvas({
     rim.position.set(0, 3, -2);
     scene.add(rim);
 
-    // Load expressive model (kawaii_girl.glb with fallback to one_one.glb)
+    // Load expressive 3D model (japanese_anime_student.glb primary, kawaii_girl.glb fallback)
     const loader = new GLTFLoader();
-    loader.load('/model/source/kawaii_girl.glb', (gltf) => {
+    loader.load('/model/source/japanese_anime_student.glb', (gltf) => {
       setupModel(gltf.scene);
     }, undefined, (err) => {
-      console.warn('Falling back to one_one.glb:', err);
-      loader.load('/model/source/one_one.glb', (gltf2) => {
+      console.warn('Japanese student model failed, loading kawaii_girl.glb fallback:', err);
+      loader.load('/model/source/kawaii_girl.glb', (gltf2) => {
         setupModel(gltf2.scene);
-      }, undefined, (err2) => {
-        console.error('Model load error:', err2);
-        setLoading(false);
       });
     });
 
@@ -201,18 +198,23 @@ export default function AvatarCanvas({
 
       model.traverse((child) => {
         if (child.isMesh) {
-          // Hide orphan background/white highlight planes that block face and cause horns/white eyes
           const meshName = (child.name || '').toLowerCase();
-          if (meshName.includes('plane')) {
+          // Hide background planes, headband horn meshes, and white eye overlay boxes
+          if (meshName.includes('plane') || meshName.includes('headband') || meshName === 'eyes') {
             child.visible = false;
           }
 
           if (child.material) {
-            // Enable clean alpha testing so eyes and hair render full color textures without white blockages
-            child.material.transparent = true;
-            child.material.alphaTest = 0.05;
-            child.material.depthWrite = true;
-            child.material.side = THREE.DoubleSide;
+            child.material = child.material.clone(); // Clone material per mesh
+            if (meshName.includes('eye') || meshName.includes('hair') || meshName.includes('brow') || child.material.map) {
+              child.material.transparent = true;
+              child.material.alphaTest = 0.05;
+              child.material.depthWrite = true;
+              child.material.side = THREE.DoubleSide;
+            } else {
+              child.material.transparent = false;
+              child.material.depthWrite = true;
+            }
             child.material.needsUpdate = true;
           }
         }
