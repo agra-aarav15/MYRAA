@@ -1,0 +1,14 @@
+{
+  "model": "model.pmx",
+  "textures": {
+    "tex\\衣.tga": "textures/tex_0.png",
+    "skin.bmp": "textures/tex_1.bmp",
+    "tex\\颜.tga": "textures/tex_2.png",
+    "toon_defo.bmp": "textures/tex_3.bmp",
+    "spa\\2.bmp": "textures/tex_4.bmp",
+    "tex\\衣2.tga": "textures/tex_5.png",
+    "spa\\heisi.png": "textures/tex_6.png",
+    "tex\\黑.jpg": "textures/tex_7.jpg",
+    "hair.bmp": "textures/tex_8.bmp"
+  }
+}

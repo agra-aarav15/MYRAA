@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+package-lock.json
+
+# Environment & Secrets (NEVER COMMIT)
+secrets.json
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+
+# Logs & Temporary Files
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build artifacts
+dist/server.cjs.map
+.DS_Store
+Thumbs.db

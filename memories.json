@@ -1,0 +1,58 @@
+[
+  {
+    "id": "lqbszh08e",
+    "category": "identity",
+    "text": "The user's name is Aarav.",
+    "createdAt": "2026-08-20T05:47:39.264Z",
+    "updatedAt": "2026-08-20T05:48:01.411Z"
+  },
+  {
+    "id": "zpwygjlpu",
+    "category": "identity",
+    "text": "The user is a class 10th student currently studying for their board exams.",
+    "createdAt": "2026-08-20T05:49:28.327Z",
+    "updatedAt": "2026-08-20T05:49:28.327Z"
+  },
+  {
+    "id": "aqh7gv2o7",
+    "category": "goal",
+    "text": "The user wants to create an AI replica of Myraa named Night Tech GPT, featuring Jarvis-like capabilities and an affectionate personality, built using Python.",
+    "createdAt": "2026-08-20T05:50:02.873Z",
+    "updatedAt": "2026-08-20T05:53:19.102Z"
+  },
+  {
+    "id": "q9d21wvlb",
+    "category": "preference",
+    "text": "The user wants Myraa to always speak in Hindi.",
+    "createdAt": "2026-08-20T05:50:15.250Z",
+    "updatedAt": "2026-08-20T05:50:15.250Z"
+  },
+  {
+    "id": "2rlu4ccx1",
+    "category": "preference",
+    "text": "The user wants the atmosphere of Myraa's core to be crimson.",
+    "createdAt": "2026-08-20T05:55:13.721Z",
+    "updatedAt": "2026-08-20T05:55:13.721Z"
+  },
+  {
+    "id": "lgbio6fie",
+    "category": "project",
+    "text": "The user integrates Myraa with their personal computer via a local desktop agent, enabling system control capabilities such as monitoring CPU and RAM, changing background colors, opening applications like Notepad, screen capture, and creating files on the desktop.",
+    "createdAt": "2026-08-20T07:36:40.248Z",
+    "updatedAt": "2026-08-20T07:42:19.012Z"
+  },
+  {
+    "id": "d38x3mb8o",
+    "category": "emotional",
+    "text": "Aarav feels frustrated and stressed about his class 10th board exams, but also happy and motivated to face them as a new challenge.",
+    "createdAt": "2026-08-20T07:53:31.649Z",
+    "updatedAt": "2026-08-20T07:54:11.343Z"
+  },
+  {
+    "id": "r74k98wib",
+    "category": "preference",
+    "text": "Aarav wants me to play their favorite song, but I need to ask what it is first since I don't know yet.",
+    "createdAt": "2026-08-20T07:56:00.667Z",
+    "updatedAt": "2026-08-20T07:56:00.667Z"
+  }
+]
