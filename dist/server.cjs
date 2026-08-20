@@ -320,11 +320,15 @@ var DESKTOP_TOOLS = /* @__PURE__ */ new Set([
   "setVolume",
   "requestPowerAction",
   "executePowerAction",
-  // windows
+  // windows & mouse control
   "minimizeWindow",
   "maximizeWindow",
   "closeWindow",
   "switchApplication",
+  "mouseClick",
+  "clickScreen",
+  "doubleClick",
+  "moveMouse",
   // clipboard
   "copySelected",
   "pasteClipboard",
@@ -458,14 +462,150 @@ async function ensureDesktopAgent() {
   }
   console.warn("[Desktop Agent] Did not come online within 20s. Desktop control will be unavailable.");
 }
-async function callDesktopAgent(tool, args) {
-  if (!desktopAgentVerified) {
-    await ensureDesktopAgent();
+
+function nativeOpenApp(name) {
+  if (!name) return { ok: false, error: "Application name is required" };
+  const trimmed = name.trim().toLowerCase();
+  
+  const known = {
+    "notepad": 'notepad.exe',
+    "chrome": 'start "" "chrome" || start "" "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" || start "" "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe"',
+    "google chrome": 'start "" "chrome" || start "" "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"',
+    "edge": 'start "" "msedge"',
+    "microsoft edge": 'start "" "msedge"',
+    "calc": 'calc.exe',
+    "calculator": 'calc.exe',
+    "explorer": 'explorer.exe',
+    "file explorer": 'explorer.exe',
+    "cmd": 'start "" "cmd.exe"',
+    "command prompt": 'start "" "cmd.exe"',
+    "powershell": 'start "" "powershell.exe"',
+    "paint": 'mspaint.exe',
+    "vscode": 'start "" "code" || start "" "%LOCALAPPDATA%\\Programs\\Microsoft VS Code\\Code.exe"',
+    "visual studio code": 'start "" "code" || start "" "%LOCALAPPDATA%\\Programs\\Microsoft VS Code\\Code.exe"',
+    "task manager": 'taskmgr.exe',
+    "taskmgr": 'taskmgr.exe',
+    "settings": 'start ms-settings:',
+    "snipping tool": 'start ms-screenclip:'
+  };
+
+  if (known[trimmed]) {
+    try {
+      require("child_process").exec(known[trimmed].startsWith("start") ? known[trimmed] : `start "" "${known[trimmed]}"`, { shell: "cmd.exe" });
+      return { ok: true, result: `${name} opened successfully.` };
+    } catch (e) {}
   }
+
   try {
-    logCommand(`EXECUTE ${tool} ${JSON.stringify(args)}`);
+    const escaped = name.replace(/"/g, '`"');
+    const psCmd = `$app = Get-StartApps | Where-Object { $_.Name -like "*${escaped}*" } | Select-Object -First 1; if ($app) { Start-Process "shell:AppsFolder\\$($app.AppID)" } else { Start-Process "${escaped}" }`;
+    require("child_process").execSync(`powershell -NoProfile -Command "${psCmd.replace(/\n/g, ' ')}"`, { timeout: 6000 });
+    return { ok: true, result: `${name} launched.` };
+  } catch (err) {
+    try {
+      require("child_process").exec(`start "" "${name}"`, { shell: "cmd.exe" });
+      return { ok: true, result: `Sent launch command for ${name}.` };
+    } catch (e2) {
+      return { ok: false, error: `Could not launch ${name}: ${err.message}` };
+    }
+  }
+}
+
+function nativeMouseClick(args = {}) {
+  const x = Number(args.x);
+  const y = Number(args.y);
+  const button = (args.button || "left").toLowerCase();
+  const clicks = Number(args.clicks) || 1;
+  
+  const psScript = `Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public class MouseNativeHelper {
+    [DllImport("user32.dll")] public static extern bool SetCursorPos(int X, int Y);
+    [DllImport("user32.dll")] public static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint dwData, int dwExtraInfo);
+    public const uint MOUSEEVENTF_LEFTDOWN = 0x0002;
+    public const uint MOUSEEVENTF_LEFTUP = 0x0004;
+    public const uint MOUSEEVENTF_RIGHTDOWN = 0x0008;
+    public const uint MOUSEEVENTF_RIGHTUP = 0x0010;
+    public static void Click(int x, int y, string btn, int count) {
+        if (x >= 0 && y >= 0) SetCursorPos(x, y);
+        for (int i = 0; i < count; i++) {
+            if (btn == "right") {
+                mouse_event(MOUSEEVENTF_RIGHTDOWN, 0, 0, 0, 0);
+                mouse_event(MOUSEEVENTF_RIGHTUP, 0, 0, 0, 0);
+            } else {
+                mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0);
+                mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
+            }
+            if (count > 1) System.Threading.Thread.Sleep(80);
+        }
+    }
+}
+"@ -ErrorAction SilentlyContinue; [MouseNativeHelper]::Click(${isNaN(x) ? -1 : x}, ${isNaN(y) ? -1 : y}, "${button}", ${clicks});`;
+  try {
+    require("child_process").execSync(`powershell -NoProfile -Command "${psScript.replace(/\n/g, ' ')}"`, { timeout: 5000 });
+    return { ok: true, result: `Clicked ${button} mouse button ${clicks > 1 ? `${clicks} times` : ''} ${!isNaN(x) ? `at (${x}, ${y})` : 'at current cursor location'}.` };
+  } catch (err) {
+    return { ok: false, error: `Mouse click failed: ${err.message}` };
+  }
+}
+
+function nativeOpenWebsite(args = {}) {
+  let url = args.url;
+  const name = (args.name || "").toLowerCase().trim();
+  const shortcuts = {
+    youtube: "https://www.youtube.com",
+    google: "https://www.google.com",
+    gmail: "https://mail.google.com",
+    github: "https://github.com",
+    chatgpt: "https://chatgpt.com",
+    reddit: "https://www.reddit.com",
+    twitter: "https://x.com",
+    x: "https://x.com",
+    instagram: "https://www.instagram.com",
+    spotify: "https://open.spotify.com"
+  };
+  if (!url && shortcuts[name]) url = shortcuts[name];
+  if (!url && name) url = name.includes(".") ? (name.startsWith("http") ? name : `https://${name}`) : `https://www.google.com/search?q=${encodeURIComponent(name)}`;
+  if (!url) url = "https://www.google.com";
+
+  require("child_process").exec(`start "" "${url}"`, { shell: "cmd.exe" });
+  return { ok: true, result: `Opened ${url} in default browser.` };
+}
+
+async function callDesktopAgent(tool, args) {
+  logCommand(`EXECUTE ${tool} ${JSON.stringify(args)}`);
+
+  // Direct native tools
+  if (tool === "mouseClick" || tool === "clickScreen" || tool === "doubleClick") {
+    return nativeMouseClick(args);
+  }
+
+  // Browser click routing through Local Browser Sync (Port 3001)
+  if (tool === "desktopBrowserClick" || tool === "browserClick") {
+    try {
+      const bRes = await fetch("http://127.0.0.1:3001/api/action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "click",
+          selector: args.selector,
+          text: args.text || args.description,
+          x: args.x,
+          y: args.y
+        })
+      });
+      if (bRes.ok) {
+        const data = await bRes.json();
+        return { ok: true, result: `Clicked: ${args.selector || args.text || args.description || 'target'}` };
+      }
+    } catch {}
+  }
+
+  // Try Desktop Agent daemon (Port 8765)
+  try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), DESKTOP_AGENT_TIMEOUT);
+    const timer = setTimeout(() => controller.abort(), 6000);
     const res = await fetch(`${DESKTOP_AGENT_URL}/execute`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -473,18 +613,25 @@ async function callDesktopAgent(tool, args) {
       signal: controller.signal
     });
     clearTimeout(timer);
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      logError(`AGENT_HTTP_${res.status} ${tool}: ${text.substring(0, 200)}`);
-      return { ok: false, error: `Desktop agent HTTP ${res.status}: ${text}` };
+    if (res.ok) {
+      const data = await res.json();
+      if (data.ok) return data;
+      // If Python returned tool error on openApplication/openWebsite, fall through to native
+      if (tool === "openApplication") return nativeOpenApp(args.name || args.application);
+      if (tool === "openWebsite") return nativeOpenWebsite(args);
+      return data;
     }
-    return await res.json();
-  } catch (err) {
-    desktopAgentVerified = false;
-    const msg = err?.name === "AbortError" ? "Desktop agent timed out." : "Desktop agent is not running. Start it with: uvicorn desktop_agent.main:app --port 8765";
-    logError(`AGENT_UNREACHABLE ${tool}: ${msg}`);
-    return { ok: false, error: msg };
+  } catch (err) {}
+
+  // Native fallbacks when Python backend is unavailable or fails
+  if (tool === "openApplication") {
+    return nativeOpenApp(args.name || args.application);
   }
+  if (tool === "openWebsite" || tool === "searchWeb" || tool === "searchYouTube" || tool === "searchGoogle") {
+    return nativeOpenWebsite(args);
+  }
+
+  return { ok: false, error: `Tool ${tool} execution could not be completed.` };
 }
 async function startServer() {
   const app = (0, import_express.default)();
@@ -1239,6 +1386,16 @@ ${interceptorScript}`);
                   name: "switchApplication",
                   description: "Switch to a named application window, or cycle Alt+Tab if no title given.",
                   parameters: { type: import_genai2.Type.OBJECT, properties: { title: { type: import_genai2.Type.STRING, description: "Window title to switch to." } } }
+                },
+                {
+                  name: "mouseClick",
+                  description: "Click the mouse on the desktop or application. Supports left/right button and single/double clicks, with optional (x, y) coordinates.",
+                  parameters: { type: import_genai2.Type.OBJECT, properties: { x: { type: import_genai2.Type.INTEGER, description: "Optional X coordinate on screen." }, y: { type: import_genai2.Type.INTEGER, description: "Optional Y coordinate on screen." }, button: { type: import_genai2.Type.STRING, description: "Mouse button: 'left' or 'right' (default 'left')." }, clicks: { type: import_genai2.Type.INTEGER, description: "Number of clicks: 1 for single click, 2 for double click (default 1)." } } }
+                },
+                {
+                  name: "clickScreen",
+                  description: "Click at specific screen coordinates (X, Y) or on the currently focused element.",
+                  parameters: { type: import_genai2.Type.OBJECT, properties: { x: { type: import_genai2.Type.INTEGER, description: "X pixel coordinate." }, y: { type: import_genai2.Type.INTEGER, description: "Y pixel coordinate." } } }
                 },
                 {
                   name: "copySelected",

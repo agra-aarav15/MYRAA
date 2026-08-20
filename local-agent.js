@@ -1,6 +1,7 @@
 /**
  * Local Browser Sync Agent (Playwright Headed Browser Bridge)
  * Port: 3001
+ * Enhanced with resilient multi-tier element clicking, typing, and navigation.
  */
 
 import express from 'express';
@@ -26,12 +27,20 @@ function log(msg) {
 }
 
 async function ensureBrowser() {
-  if (!browser) {
-    log('Launching headed Chromium browser...');
-    browser = await chromium.launch({ headless: false });
-    context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
-    page = await context.newPage();
-    log('Chromium browser window active and ready.');
+  if (page && !page.isClosed()) {
+    return { browser, context, page };
+  }
+  if (!browser || !browser.isConnected()) {
+    log('Launching headed Chromium browser for desktop automation...');
+    browser = await chromium.launch({
+      headless: false,
+      args: ['--start-maximized', '--no-sandbox', '--disable-blink-features=AutomationControlled'],
+    });
+    context = await browser.newContext({ viewport: null });
+  }
+  if (!page || page.isClosed()) {
+    const pages = context.pages();
+    page = pages.length > 0 ? pages[0] : await context.newPage();
   }
   return { browser, context, page };
 }
@@ -41,16 +50,19 @@ app.get('/api/status', (req, res) => {
   res.json({
     ok: true,
     status: 'connected',
-    browserActive: Boolean(browser && page),
+    browserActive: Boolean(browser && page && !page.isClosed()),
     logs: actionLogs,
-    currentUrl: page ? page.url() : null,
+    currentUrl: page && !page.isClosed() ? page.url() : null,
   });
 });
 
 // Navigate to URL
 app.post('/api/navigate', async (req, res) => {
-  const { url } = req.body;
+  let { url } = req.body;
   if (!url) return res.status(400).json({ ok: false, error: 'Missing url parameter' });
+  if (!url.startsWith('http://') && !url.startsWith('https://')) {
+    url = 'https://' + url;
+  }
   try {
     const { page: p } = await ensureBrowser();
     log(`Navigating to: ${url}`);
@@ -62,34 +74,148 @@ app.post('/api/navigate', async (req, res) => {
   }
 });
 
-// Generic browser action
+// Smart multi-tier click handler
+async function smartClick(p, target, options = {}) {
+  const timeout = options.timeout || 6000;
+  
+  // Strategy 1: If target looks like a valid CSS/XPath selector
+  try {
+    const el = p.locator(target).first();
+    if (await el.isVisible({ timeout: 1500 })) {
+      await el.click({ timeout: 3000 });
+      return { strategy: 'css_selector', target };
+    }
+  } catch {}
+
+  // Strategy 2: Exact or partial visible text
+  try {
+    const textLocator = p.getByText(target, { exact: false }).first();
+    if (await textLocator.isVisible({ timeout: 1500 })) {
+      await textLocator.click({ timeout: 3000 });
+      return { strategy: 'text_match', target };
+    }
+  } catch {}
+
+  // Strategy 3: Role locator for interactive elements (button, link, tab, searchbox)
+  for (const role of ['button', 'link', 'tab', 'menuitem', 'combobox', 'searchbox']) {
+    try {
+      const roleLocator = p.getByRole(role, { name: new RegExp(target, 'i') }).first();
+      if (await roleLocator.isVisible({ timeout: 1200 })) {
+        await roleLocator.click({ timeout: 3000 });
+        return { strategy: `role_${role}`, target };
+      }
+    } catch {}
+  }
+
+  // Strategy 4: Placeholder or Aria-label match
+  try {
+    const placeholderLocator = p.getByPlaceholder(target, { exact: false }).first();
+    if (await placeholderLocator.isVisible({ timeout: 1000 })) {
+      await placeholderLocator.click({ timeout: 2000 });
+      return { strategy: 'placeholder', target };
+    }
+  } catch {}
+
+  // Strategy 5: Direct evaluate query across common clickable elements
+  const clicked = await p.evaluate((term) => {
+    const lower = term.toLowerCase();
+    const candidates = Array.from(document.querySelectorAll('a, button, [role="button"], input[type="button"], input[type="submit"], h3, span, div'));
+    for (const el of candidates) {
+      const txt = (el.innerText || el.textContent || el.getAttribute('aria-label') || el.getAttribute('title') || '').trim().toLowerCase();
+      if (txt && (txt === lower || txt.includes(lower))) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.click();
+        return true;
+      }
+    }
+    return false;
+  }, target);
+
+  if (clicked) {
+    return { strategy: 'dom_fuzzy_match', target };
+  }
+
+  // Fallback direct click
+  await p.click(target, { timeout });
+  return { strategy: 'direct_fallback', target };
+}
+
+// Browser actions: click, type, search, scroll, etc.
 app.post('/api/action', async (req, res) => {
-  const { action, selector, text, query } = req.body;
+  const { action, selector, text, query, x, y } = req.body;
   try {
     const { page: p } = await ensureBrowser();
+    let resultDetails = {};
+
     switch (action) {
-      case 'click':
-        log(`Clicking selector: ${selector}`);
-        await p.click(selector, { timeout: 10000 });
+      case 'click': {
+        const target = selector || text;
+        if (!target && x !== undefined && y !== undefined) {
+          log(`Clicking coordinates: (${x}, ${y})`);
+          await p.mouse.click(Number(x), Number(y));
+          resultDetails = { clicked: `Coordinates (${x}, ${y})` };
+        } else if (target) {
+          log(`Smart clicking target: "${target}"`);
+          const resClick = await smartClick(p, target);
+          resultDetails = { clicked: target, ...resClick };
+        } else {
+          return res.status(400).json({ ok: false, error: 'Provide selector, text, or (x, y) coordinates to click.' });
+        }
         break;
-      case 'type':
-        log(`Typing into ${selector}: ${text}`);
-        await p.fill(selector, text, { timeout: 10000 });
+      }
+      case 'type': {
+        const target = selector;
+        const textToType = text || query || '';
+        if (target) {
+          log(`Typing into "${target}": ${textToType}`);
+          try {
+            await p.fill(target, textToType, { timeout: 4000 });
+          } catch {
+            await smartClick(p, target);
+            await p.keyboard.type(textToType);
+          }
+        } else {
+          log(`Typing directly: ${textToType}`);
+          await p.keyboard.type(textToType);
+        }
+        resultDetails = { typed: textToType.length };
         break;
-      case 'search':
-        log(`Searching: ${query}`);
-        await p.goto(`https://www.google.com/search?q=${encodeURIComponent(query)}`);
+      }
+      case 'search': {
+        const q = query || text;
+        log(`Executing web search: "${q}"`);
+        await p.goto(`https://www.google.com/search?q=${encodeURIComponent(q)}`, { waitUntil: 'domcontentloaded' });
+        resultDetails = { searched: q };
         break;
-      case 'scroll':
-        log('Scrolling down');
-        await p.evaluate(() => window.scrollBy(0, 500));
+      }
+      case 'scroll': {
+        const amount = Number(req.body.amount) || 500;
+        const direction = req.body.direction === 'up' ? -amount : amount;
+        log(`Scrolling page by ${direction}px`);
+        await p.evaluate((yDelta) => window.scrollBy({ top: yDelta, behavior: 'smooth' }), direction);
+        resultDetails = { scrolled: direction };
         break;
+      }
+      case 'press': {
+        const key = req.body.key || 'Enter';
+        log(`Pressing key: ${key}`);
+        await p.keyboard.press(key);
+        resultDetails = { pressed: key };
+        break;
+      }
       default:
         return res.status(400).json({ ok: false, error: `Unknown action: ${action}` });
     }
-    res.json({ ok: true, url: p.url(), title: await p.title() });
+
+    res.json({
+      ok: true,
+      action,
+      url: p.url(),
+      title: await p.title(),
+      ...resultDetails,
+    });
   } catch (err) {
-    log(`Action error: ${err.message}`);
+    log(`Action error (${action}): ${err.message}`);
     res.status(500).json({ ok: false, error: err.message });
   }
 });
