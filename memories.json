@@ -16,23 +16,9 @@
   {
     "id": "aqh7gv2o7",
     "category": "goal",
-    "text": "The user wants to create an AI replica of Myraa named Night Tech GPT, featuring Jarvis-like capabilities and an affectionate personality, built using Python.",
+    "text": "The user wants to create an AI companion named MYRAA (Tech GPT), featuring autonomous desktop companion capabilities and an affectionate personality, built using Python and Node.js.",
     "createdAt": "2026-08-20T05:50:02.873Z",
     "updatedAt": "2026-08-20T05:53:19.102Z"
-  },
-  {
-    "id": "q9d21wvlb",
-    "category": "preference",
-    "text": "The user wants Myraa to always speak in Hindi.",
-    "createdAt": "2026-08-20T05:50:15.250Z",
-    "updatedAt": "2026-08-20T05:50:15.250Z"
-  },
-  {
-    "id": "2rlu4ccx1",
-    "category": "preference",
-    "text": "The user wants the atmosphere of Myraa's core to be crimson.",
-    "createdAt": "2026-08-20T05:55:13.721Z",
-    "updatedAt": "2026-08-20T05:55:13.721Z"
   },
   {
     "id": "lgbio6fie",
