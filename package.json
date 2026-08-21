@@ -1,8 +1,10 @@
 {
   "name": "myraa",
   "productName": "MYRAA",
-  "description": "MYRAA — a private 3D AI desktop companion powered by each user's own Gemini API key.",
+  "description": "MYRAA — Private 3D AI Desktop Companion & Autonomous Voice Assistant created by Aarav.",
   "author": "Aarav",
+  "copyright": "Copyright (c) 2026 Aarav. All Rights Reserved.",
+  "license": "UNLICENSED",
   "private": true,
   "version": "1.0.0",
   "type": "module",
