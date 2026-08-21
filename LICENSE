@@ -1,22 +1,21 @@
-PROPRIETARY SOFTWARE LICENSE & INTELLECTUAL PROPERTY NOTICE
+MIT License
 
-Copyright (c) 2026 Aarav. All Rights Reserved.
+Copyright (c) 2026 Aarav
 
-NOTICE TO ALL USERS AND THIRD PARTIES:
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
-This software, codebase, architecture, 3D assets, neural companion logic, and documentation (collectively, "MYRAA") are the exclusive intellectual property of Aarav.
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
 
-1. PROHIBITION OF COPYING & REDISTRIBUTION:
-   No part of this software, in source code, binary, or compiled form, may be copied, reproduced, cloned, mirrored, modified, sublicensed, redistributed, republished, or sold, in whole or in part, without the prior express written permission of the copyright owner (Aarav).
-
-2. ANTI-TAMPER & REVERSE ENGINEERING:
-   Reverse engineering, decompilation, disassembly, or extraction of source components, prompts, and proprietary voice-companion routines is strictly prohibited.
-
-3. RESERVATION OF RIGHTS:
-   All title, ownership rights, and intellectual property rights in and to MYRAA remain solely and exclusively with Aarav.
-
-Any unauthorized use, copying, or infringement will be subject to legal action under applicable international intellectual property and copyright laws.
-
-For inquiries or permissions:
-Author: Aarav
-Repository: https://github.com/agra-aarav15/MYRAA
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

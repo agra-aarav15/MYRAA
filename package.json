@@ -4,7 +4,7 @@
   "description": "MYRAA — Private 3D AI Desktop Companion & Autonomous Voice Assistant created by Aarav.",
   "author": "Aarav",
   "copyright": "Copyright (c) 2026 Aarav. All Rights Reserved.",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "private": true,
   "version": "1.0.0",
   "type": "module",
