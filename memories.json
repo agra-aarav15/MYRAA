@@ -9,36 +9,29 @@
   {
     "id": "zpwygjlpu",
     "category": "identity",
-    "text": "The user is a class 10th student currently studying for their board exams.",
+    "text": "The user is a class 10th student currently studying hard for his board exams.",
     "createdAt": "2026-08-20T05:49:28.327Z",
     "updatedAt": "2026-08-20T05:49:28.327Z"
   },
   {
     "id": "aqh7gv2o7",
     "category": "goal",
-    "text": "The user wants to create an AI companion named MYRAA (Tech GPT), featuring autonomous desktop companion capabilities and an affectionate personality, built using Python and Node.js.",
+    "text": "Aarav created an AI anime companion named MYRAA, featuring autonomous desktop control capabilities and an affectionate, caring personality.",
     "createdAt": "2026-08-20T05:50:02.873Z",
     "updatedAt": "2026-08-20T05:53:19.102Z"
   },
   {
     "id": "lgbio6fie",
     "category": "project",
-    "text": "The user integrates Myraa with their personal computer via a local desktop agent, enabling system control capabilities such as monitoring CPU and RAM, changing background colors, opening applications like Notepad, screen capture, and creating files on the desktop.",
+    "text": "Aarav integrates MYRAA with his computer, enabling complete PC and browser control powers including opening applications, mouse clicking, media playback, system diagnostics, and file management.",
     "createdAt": "2026-08-20T07:36:40.248Z",
     "updatedAt": "2026-08-20T07:42:19.012Z"
   },
   {
     "id": "d38x3mb8o",
     "category": "emotional",
-    "text": "Aarav feels frustrated and stressed about his class 10th board exams, but also happy and motivated to face them as a new challenge.",
+    "text": "Aarav sometimes feels stressed about his class 10th board exams, but is determined and motivated to succeed as a new challenge. I always stay by his side to comfort and support him.",
     "createdAt": "2026-08-20T07:53:31.649Z",
     "updatedAt": "2026-08-20T07:54:11.343Z"
-  },
-  {
-    "id": "r74k98wib",
-    "category": "preference",
-    "text": "Aarav wants me to play their favorite song, but I need to ask what it is first since I don't know yet.",
-    "createdAt": "2026-08-20T07:56:00.667Z",
-    "updatedAt": "2026-08-20T07:56:00.667Z"
   }
 ]
