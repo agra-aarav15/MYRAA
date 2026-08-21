@@ -1,0 +1,22 @@
+{
+  "name": "MYRAA — AI Desktop Companion",
+  "short_name": "MYRAA",
+  "description": "Autonomous 3D Anime AI Voice Companion & Desktop Assistant created by Aarav.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#020205",
+  "theme_color": "#020205",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/assets/icon.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/assets/icon.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

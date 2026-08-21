@@ -1,0 +1,129 @@
+/* ==========================================================================
+   MYRAA — Premium Black Glassmorphism Aesthetic (Aarav Edition)
+   Dark Obsidian Glass, Ambient Nebula Glow, & Minimalist HUD
+   ========================================================================== */
+
+:root {
+  --bg-obsidian: #020205;
+  --glass-bg: rgba(6, 6, 12, 0.72);
+  --glass-bg-subtle: rgba(255, 255, 255, 0.03);
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --glass-border-hover: rgba(255, 255, 255, 0.18);
+  --glass-blur: blur(28px) saturate(190%);
+  --glass-shadow: 0 20px 50px -10px rgba(0, 0, 0, 0.9), 0 0 1px 1px rgba(255, 255, 255, 0.05), inset 0 1px 0 0 rgba(255, 255, 255, 0.12);
+  --accent-glow: rgba(168, 85, 247, 0.18);
+  --cyan-glow: rgba(6, 182, 212, 0.15);
+}
+
+/* Base Body & High-Tech Obsidian Mesh */
+body, html {
+  background-color: var(--bg-obsidian) !important;
+  color: #f1f5f9 !important;
+  overflow-x: hidden;
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  -webkit-font-smoothing: antialiased;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background: 
+    radial-gradient(circle at 50% 10%, rgba(99, 102, 241, 0.12) 0%, transparent 55%),
+    radial-gradient(circle at 85% 75%, rgba(168, 85, 247, 0.08) 0%, transparent 45%),
+    radial-gradient(circle at 15% 80%, rgba(6, 182, 212, 0.06) 0%, transparent 45%),
+    radial-gradient(circle at 50% 100%, rgba(2, 6, 23, 0.9) 0%, #000000 100%);
+}
+
+/* Subtle High-Tech Micro Grid Overlay */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.18;
+  background-image: 
+    linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+/* Premium Black Glassmorphic Panels & Floating Cards */
+.bg-slate-900\/80,
+.bg-slate-900\/85,
+.bg-slate-900\/60,
+.bg-slate-900\/50,
+.bg-slate-950\/80,
+.bg-slate-950\/90,
+.bg-slate-950\/70,
+.bg-\[\#020206\]\/95,
+#myraa-playwright-automation-hud > div {
+  background: var(--glass-bg) !important;
+  backdrop-filter: var(--glass-blur) !important;
+  -webkit-backdrop-filter: var(--glass-blur) !important;
+  border: 1px solid var(--glass-border) !important;
+  box-shadow: var(--glass-shadow) !important;
+}
+
+/* Sleek Floating Glass Pill Buttons */
+button {
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+
+button:hover {
+  border-color: var(--glass-border-hover) !important;
+  filter: brightness(1.08);
+}
+
+/* Glass Inputs & Search Bars */
+input[type="text"],
+input[type="search"],
+textarea {
+  background: rgba(0, 0, 0, 0.5) !important;
+  backdrop-filter: blur(16px) !important;
+  -webkit-backdrop-filter: blur(16px) !important;
+  border: 1px solid rgba(255, 255, 255, 0.09) !important;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.6) !important;
+  color: #f8fafc !important;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease !important;
+}
+
+input[type="text"]:focus,
+input[type="search"]:focus,
+textarea:focus {
+  border-color: rgba(168, 85, 247, 0.5) !important;
+  box-shadow: 0 0 16px rgba(168, 85, 247, 0.2), inset 0 2px 4px rgba(0, 0, 0, 0.6) !important;
+  outline: none !important;
+}
+
+/* Native App-Like Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.24);
+}
+
+/* Mobile APK & Native Standalone Viewport */
+@media (display-mode: standalone), (max-width: 768px) {
+  body {
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+    touch-action: manipulation;
+  }
+}
