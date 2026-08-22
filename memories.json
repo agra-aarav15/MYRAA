@@ -2,9 +2,9 @@
   {
     "id": "lqbszh08e",
     "category": "identity",
-    "text": "The user's name is Aarav.",
+    "text": "The user's name is Aarav, and he wants his name pronounced specifically as 'Aarav', not 'Arav' or 'Erav'.",
     "createdAt": "2026-08-20T05:47:39.264Z",
-    "updatedAt": "2026-08-20T05:48:01.411Z"
+    "updatedAt": "2026-08-22T08:59:36.507Z"
   },
   {
     "id": "zpwygjlpu",
@@ -56,10 +56,10 @@
     "updatedAt": "2026-08-22T07:05:25.021Z"
   },
   {
-    "id": "t81jar1gw",
-    "category": "project",
-    "text": "The user tasked MYRAA with creating a snake game and requested her to not speak to him until the project is completed.",
-    "createdAt": "2026-08-22T07:08:04.721Z",
-    "updatedAt": "2026-08-22T07:08:04.721Z"
+    "id": "faeq3s9xz",
+    "category": "emotional",
+    "text": "Aarav is deeply frustrated with MYRAA, believing she is incapable of executing PC control tasks because her attempts to open applications like YouTube and Notepad consistently fail, and he remains highly annoyed by her persistent errors in pronouncing his name.",
+    "createdAt": "2026-08-22T08:59:45.598Z",
+    "updatedAt": "2026-08-22T09:01:08.291Z"
   }
 ]
