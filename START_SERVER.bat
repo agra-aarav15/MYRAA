@@ -5,6 +5,7 @@ setlocal enabledelayedexpansion
 set "ROOT=%~dp0"
 set "NODE_ENV=production"
 set "PORT=3000"
+set "MYRAA_AGENT_EXE=%ROOT%..\agent\myraa-agent.exe"
 
 echo ===================================================================
 echo   🌸 Starting MYRAA — Autonomous 3D AI Companion by Aarav
