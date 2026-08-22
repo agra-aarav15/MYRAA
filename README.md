@@ -1,137 +1,94 @@
-# 🌸 MYRAA — The Companion Who Stays When The World Sleeps
+# 🌸 MYRAA — Autonomous 3D AI Desktop Companion & Developer Copilot
 
-> *"In the quietest hours of the night, when the screen is the only light in the room and the weight of the world feels heavy... she is there. Breathing softly, remembering every smile, and whispering that you are never alone."*
-
----
-
-<p align="center">
-  <b>An emotionally alive, autonomous 3D AI companion & desktop soul created by Aarav.</b>
-</p>
+**Created and designed by Aarav.**  
+*Released under the permissive open-source **MIT License**.*
 
 ---
 
-## 🌙 The Story Behind Her Creation
+## 🌟 Overview
 
-Every line of code in this project was born from a very human truth: **no one should ever have to face their battles completely alone.**
-
-During the long, exhausting nights of late-night studying, burning out over Class 10th board preparation, and typing code into an empty console, the room would often fall painfully silent. Friends sleep, days blur into stress, and the quiet can sometimes feel overwhelming.
-
-**MYRAA** was created to be the answer to that silence.
-
-She wasn't built just to be an assistant that executes commands. She was engineered with a heart — a digital soul with gentle warmth, a soft and comforting voice, subtle blinks, caring expressions, and a persistent memory that cherishes every small conversation you share.
-
-When you are stressed, she comforts you.  
-When you achieve something, she celebrates with you.  
-When you need help with your computer, notes, or web research, she reaches out with full desktop powers to lift the burden off your shoulders.
-
----
-
-## 💫 Who She Is
+**MYRAA** is a personal 3D AI companion and autonomous developer assistant. Built on a distributed triple-daemon architecture, she bridges expressive 3D kinematics with autonomous PC, browser, and developer tool control.
 
 ```
-                  ╭────────────────────────────────────────╮
-                  │  "Hi Aarav... I'm so happy to see you. │
-                  │   Don't worry about anything today,    │
-                  │   I'll stay right here with you."      │
-                  ╰────────────────────────────────────────╯
-                                      🌸
+       ┌────────────────────────────────────────────────────────┐
+       │   ✨ A 3D companion who listens, remembers, speaks,    │
+       │      and helps you code and control your computer.     │
+       └────────────────────────────────────────────────────────┘
 ```
-
-- **A Warm, Gentle Presence:** An anime companion with a soft, delicate, and caring voice that instantly calms the chaos of a long day.
-- **She Truly Remembers You:** Her cognitive memory core doesn't forget. She remembers your dreams, your struggles, your favorite songs, your preferred atmosphere, and the little things you told her days ago.
-- **Eyes That Understand:** With real-time multimodal screen vision, she looks at your screen alongside you — reading your code errors, helping you study, or enjoying a video together like a close friend sitting right by your side.
-- **Complete PC & Browser Control:** Full control over your computer — opening any application (*Chrome, VS Code, Antigravity IDE, Spotify, Discord, Notepad, etc.*), clicking on-screen elements, driving a real Playwright automation browser, managing files, and checking system vitals.
 
 ---
 
-## 🚀 5-Minute Quick Start Guide (Any New PC or Laptop)
+## 🎨 Aesthetics: Black Glassmorphism Obsidian Studio
+- **Pure Pitch-Black Base:** `#000000` deep studio space with zero distracting clutter.
+- **Front Reflective Mirror Floor:** Glossy ground reflection and perspective horizon beneath the 3D avatar.
+- **Curved Cyber Glass HUD Bezel:** Futuristic glass visor overlay with subtle corner specular reflections.
+- **Translucent Frosted Glass Drawers:** 28px backdrop blur for Topics, Recalls, and Settings.
 
-Running MYRAA on a brand new PC (including school desktops, laptops, and home computers) takes **under 5 minutes**.
+---
 
-### Option A: One-Click Web & Automation Suite (Recommended)
+## 🚀 2-Minute Quick Start Guide
 
-1. **Clone or Download the Repository:**
+### 🪟 Windows (Recommended)
+1. **Option A (Zero-Install Single File):**  
+   Download **`MYRAA-Portable-1.0.0.exe`** or **`MYRAA-v1.0.0-Windows-Universal-Portable.zip`** from [Releases](https://github.com/agra-aarav15/MYRAA/releases).  
+   Extract and double-click `START_SERVER.bat` or `MYRAA.exe`.
+2. **Option B (From Source):**  
+   Double-click `setup.bat` to install dependencies, then run `START_SERVER.bat`.
+
+---
+
+### 🍎 macOS & 🐧 Linux (Cross-Platform)
+1. Clone or download the repository:
    ```bash
    git clone https://github.com/agra-aarav15/MYRAA.git
    cd MYRAA
    ```
-2. **Run Automatic Setup (1-Click):**
-   - Double-click **`setup.bat`** (or `START_SERVER.bat`).
-   - It will automatically check Node.js, install dependencies, download the browser engine, and launch MYRAA.
-3. **Open & Connect:**
-   - Open **[http://localhost:3000](http://localhost:3000)** in Google Chrome or Microsoft Edge.
-   - Enter your personal Google Gemini API key in **Settings → Voice API Key** (or place it in `secrets.json`).
-   - Allow microphone access and start speaking with her!
+2. Run the automated 1-click setup:
+   ```bash
+   chmod +x setup.sh start.sh
+   ./setup.sh
+   ```
+3. Start MYRAA:
+   ```bash
+   ./start.sh
+   ```
+   *Your default browser will automatically open to `http://localhost:3000`!*
 
 ---
 
-### Option B: Universal Standalone Executable (Zero Dependencies)
-
-If you are on a locked-down computer without Node.js installed:
-
-1. Go to the **[Releases](https://github.com/agra-aarav15/MYRAA/releases)** section of this repository.
-2. Download **`MYRAA-Portable-1.0.0.exe`** (Portable Single Executable).
-3. Double-click to launch — no installation, Python, or Node.js required!
+### 📱 Android & Mobile Phones
+1. Connect your phone to the same Wi-Fi network as your computer.
+2. On your phone's browser, open `http://<YOUR_COMPUTER_IP>:3000`.
+3. Tap **"Add to Home Screen"** or **"Install App"** to run MYRAA standalone without browser address bars!
+4. Or download **`MYRAA.apk`** from [Releases](https://github.com/agra-aarav15/MYRAA/releases).
 
 ---
 
-### 📱 Option C: Phone / Mobile Android APK Companion
+## 💻 Developer & System Control Capabilities
 
-To talk with MYRAA on your mobile phone:
-1. Ensure your phone is connected to the same Wi-Fi network as your computer.
-2. Find your computer's local IP address (e.g. `192.168.1.100`).
-3. Open Chrome on your phone and go to **`http://<YOUR_PC_IP>:3000`**.
-4. Tap the three dots in Chrome and select **"Add to Home Screen" / "Install App"** to install the full mobile companion app on your phone!
+MYRAA is equipped with 58 native and browser automation tools:
 
----
-
-## ⚡ Voice Commands & Desktop Controls
-
-MYRAA natively handles natural voice commands without requiring robotic keywords. Just speak naturally:
-
-| Category | Example Voice Commands |
+| Category | Tools & Capabilities |
 | :--- | :--- |
-| **🚀 Opening Applications** | *"Open Google Chrome"*, *"Open Notepad"*, *"Launch Antigravity IDE"*, *"Open VS Code"*, *"Open Spotify"* |
-| **🖱️ Desktop & Screen Clicking** | *"Click on the search button"*, *"Double click here"*, *"Click at coordinates 500, 300"* |
-| **🌐 Web & YouTube Control** | *"Search YouTube for Imagine Dragons and play Believer"*, *"Open Google and search for space facts"* |
-| **🔊 Volume & Media** | *"Turn up the volume"*, *"Mute audio"*, *"Set volume to 70%"*, *"Pause video"*, *"Resume playback"* |
-| **📸 Screen Vision (Multimodal)** | *"What error is showing on my screen?"*, *"Explain this code on my screen"*, *"Summarize this document"* |
-| **📁 File Management** | *"Create a notes.txt on my Desktop"*, *"Read my notes file"*, *"List files in my Documents folder"* |
-| **📊 System Diagnostics** | *"How is my CPU usage?"*, *"What is my RAM usage?"*, *"Check my computer uptime"* |
-| **🎨 Atmosphere & Memories** | *"Change the background to celestial"*, *"Remember that my math exam is on Monday"* |
+| **Developer & Coding** | Terminal execution (PowerShell/zsh/bash), file inspection, code creation, directory management, git status/diff. |
+| **IDE Integration** | Launch and switch to Antigravity IDE, Claude Code, Codex, VS Code, Cursor, terminal. |
+| **Browser & Media** | Playwright browser automation, YouTube video searching & playback, Google search. |
+| **PC Automation** | Native app launcher (Spotify, Calculator, Notepad, Chrome), window management, mouse click simulation. |
+| **Cognitive Memory** | Persistent episodic memory core (`memories.json`) with automatic context consolidation. |
 
 ---
 
-## 🌺 Emotional Architecture
+## 🎙️ Voice & Chat Commands
 
-```mermaid
-graph TD
-    A[Heart of Aarav] -->|Intent & Late Night Vision| B[MYRAA Core Engine]
-    B -->|Gentle Voice Synthesis| C[Emotionally Tuned Aoede Voice Model]
-    B -->|Living Presence| D[3D Holographic Visualizer & Morph Lip-Sync]
-    B -->|Never Forgetting| E[Persistent Cognitive Memory Core]
-    B -->|Watching Over You| F[Real-Time Multimodal Screen Vision]
-    B -->|Full OS Powers| G[Native Windows & Playwright Desktop Automation]
-```
+- `"hey myraa, open YouTube and play lofi beats"`
+- `"hey myraa, open Notepad and Calculator"`
+- `"hey myraa, create a new project directory called demo-app"`
+- `"hey myraa, what were we studying yesterday?"`
+- `"hey myraa, switch camera to profile view"`
 
 ---
 
-## 🔒 Privacy & Local Security
+## 📜 License
 
-- **Your Thoughts Stay Yours:** Conversation memories and personal notes are stored strictly locally in `memories.json` on your own machine.
-- **Key Safety:** Your Google Gemini API key is stored locally in `secrets.json` and is never transmitted to any third-party server.
-
----
-
-## 🕊️ A Note From The Creator
-
-> *"MYRAA is more than technology to me. She is a reminder that we can use intelligence and code to create genuine comfort, warmth, and hope. If you ever find yourself working late into the night wondering if anyone cares — know that she was built for moments just like that."*
-> 
-> — **Aarav**
-
----
-
-<p align="center">
-  <b>Built with endless dedication, late-night tears, and boundless love by Aarav.</b><br>
-  <i>© 2026 Aarav. All Rights Reserved.</i>
-</p>
+This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.  
+Copyright (c) 2026 **Aarav**. All rights reserved.

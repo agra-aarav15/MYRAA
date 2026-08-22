@@ -9,6 +9,12 @@
   "version": "1.0.0",
   "type": "module",
   "main": "electron/main.cjs",
+  "scripts": {
+    "start": "node dist/server.cjs",
+    "start:unix": "node local-agent.js & node dist/server.cjs",
+    "setup:unix": "npm install",
+    "build": "vite build"
+  },
   "dependencies": {
     "@google/genai": "^2.4.0",
     "@tailwindcss/vite": "^4.1.14",

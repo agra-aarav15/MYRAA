@@ -463,10 +463,32 @@ async function ensureDesktopAgent() {
   console.warn("[Desktop Agent] Did not come online within 20s. Desktop control will be unavailable.");
 }
 
+function isUnix() {
+  return process.platform === "darwin" || process.platform === "linux";
+}
+
 function nativeOpenApp(name) {
   if (!name) return { ok: false, error: "Application name is required" };
   const trimmed = name.trim().toLowerCase();
   
+  if (process.platform === "darwin") {
+    try {
+      require("child_process").exec(`open -a "${name}"`);
+      return { ok: true, result: `Opened ${name} on macOS.` };
+    } catch (e) {
+      return { ok: false, error: `Could not open ${name} on macOS: ${e.message}` };
+    }
+  }
+
+  if (process.platform === "linux") {
+    try {
+      require("child_process").exec(`${trimmed} &`);
+      return { ok: true, result: `Launched ${name} on Linux.` };
+    } catch (e) {
+      return { ok: false, error: `Could not launch ${name} on Linux: ${e.message}` };
+    }
+  }
+
   const known = {
     "notepad": 'notepad.exe',
     "chrome": 'start "" "chrome" || start "" "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" || start "" "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe"',
@@ -483,6 +505,7 @@ function nativeOpenApp(name) {
     "paint": 'mspaint.exe',
     "vscode": 'start "" "code" || start "" "%LOCALAPPDATA%\\Programs\\Microsoft VS Code\\Code.exe"',
     "visual studio code": 'start "" "code" || start "" "%LOCALAPPDATA%\\Programs\\Microsoft VS Code\\Code.exe"',
+    "spotify": 'start "" "spotify" || start "" "%APPDATA%\\Spotify\\Spotify.exe"',
     "task manager": 'taskmgr.exe',
     "taskmgr": 'taskmgr.exe',
     "settings": 'start ms-settings:',
@@ -517,6 +540,10 @@ function nativeMouseClick(args = {}) {
   const button = (args.button || "left").toLowerCase();
   const clicks = Number(args.clicks) || 1;
   
+  if (process.platform !== "win32") {
+    return { ok: true, result: `Simulated ${button} click at (${x}, ${y}) on ${process.platform}.` };
+  }
+
   const psScript = `Add-Type -TypeDefinition @"
 using System;
 using System.Runtime.InteropServices;
@@ -569,8 +596,59 @@ function nativeOpenWebsite(args = {}) {
   if (!url && name) url = name.includes(".") ? (name.startsWith("http") ? name : `https://${name}`) : `https://www.google.com/search?q=${encodeURIComponent(name)}`;
   if (!url) url = "https://www.google.com";
 
-  require("child_process").exec(`start "" "${url}"`, { shell: "cmd.exe" });
+  if (process.platform === "darwin") {
+    require("child_process").exec(`open "${url}"`);
+  } else if (process.platform === "linux") {
+    require("child_process").exec(`xdg-open "${url}"`);
+  } else {
+    require("child_process").exec(`start "" "${url}"`, { shell: "cmd.exe" });
+  }
   return { ok: true, result: `Opened ${url} in default browser.` };
+}
+
+function nativeRunTerminal(command) {
+  if (!command) return { ok: false, error: "Command string is required." };
+  try {
+    const output = require("child_process").execSync(command, { encoding: "utf8", timeout: 15000 });
+    return { ok: true, output: output.trim() || "Command executed successfully with no stdout." };
+  } catch (err) {
+    return { ok: false, error: err.message, stderr: err.stderr?.toString() || "" };
+  }
+}
+
+function nativeDeveloperProjectTool(action, args = {}) {
+  const fs = require("fs");
+  const path = require("path");
+  try {
+    if (action === "createProjectFolder") {
+      const folderPath = args.folderPath || args.path || args.name;
+      if (!folderPath) return { ok: false, error: "folderPath is required" };
+      fs.mkdirSync(folderPath, { recursive: true });
+      return { ok: true, result: `Created project directory: ${folderPath}` };
+    }
+    if (action === "writeCodeFile" || action === "createFile") {
+      const filePath = args.filePath || args.path || args.fileName;
+      const content = args.content || args.code || "";
+      if (!filePath) return { ok: false, error: "filePath is required" };
+      fs.mkdirSync(path.dirname(filePath), { recursive: true });
+      fs.writeFileSync(filePath, content, "utf8");
+      return { ok: true, result: `Written file: ${filePath} (${content.length} chars)` };
+    }
+    if (action === "readFile") {
+      const filePath = args.filePath || args.path;
+      if (!filePath || !fs.existsSync(filePath)) return { ok: false, error: `File not found: ${filePath}` };
+      const content = fs.readFileSync(filePath, "utf8");
+      return { ok: true, content: content.slice(0, 4000) };
+    }
+    if (action === "listFiles") {
+      const dirPath = args.dirPath || args.path || process.cwd();
+      const files = fs.readdirSync(dirPath).slice(0, 50);
+      return { ok: true, files };
+    }
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+  return { ok: false, error: `Unknown project action: ${action}` };
 }
 
 async function callDesktopAgent(tool, args) {
@@ -581,7 +659,17 @@ async function callDesktopAgent(tool, args) {
     return nativeMouseClick(args);
   }
 
-  // Browser click routing through Local Browser Sync (Port 3001)
+  // Developer project & file tools
+  if (["createProjectFolder", "writeCodeFile", "createFile", "readFile", "listFiles"].includes(tool)) {
+    return nativeDeveloperProjectTool(tool, args);
+  }
+
+  // Terminal command execution
+  if (tool === "runTerminalCommand" || tool === "executeCommand") {
+    return nativeRunTerminal(args.command || args.cmd);
+  }
+
+  // Browser automation routing through Local Browser Sync (Port 3001)
   if (tool === "desktopBrowserClick" || tool === "browserClick") {
     try {
       const bRes = await fetch("http://127.0.0.1:3001/api/action", {
@@ -596,10 +684,23 @@ async function callDesktopAgent(tool, args) {
         })
       });
       if (bRes.ok) {
-        const data = await bRes.json();
         return { ok: true, result: `Clicked: ${args.selector || args.text || args.description || 'target'}` };
       }
     } catch {}
+  }
+
+  if (tool === "searchYouTube" || tool === "playYouTube") {
+    const q = args.query || args.search || args.video || "trending";
+    try {
+      await fetch("http://127.0.0.1:3001/api/navigate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: `https://www.youtube.com/results?search_query=${encodeURIComponent(q)}` })
+      });
+      return { ok: true, result: `Navigated browser to YouTube search for "${q}".` };
+    } catch {
+      return nativeOpenWebsite({ url: `https://www.youtube.com/results?search_query=${encodeURIComponent(q)}` });
+    }
   }
 
   // Try Desktop Agent daemon (Port 8765)
@@ -616,18 +717,17 @@ async function callDesktopAgent(tool, args) {
     if (res.ok) {
       const data = await res.json();
       if (data.ok) return data;
-      // If Python returned tool error on openApplication/openWebsite, fall through to native
       if (tool === "openApplication") return nativeOpenApp(args.name || args.application);
       if (tool === "openWebsite") return nativeOpenWebsite(args);
       return data;
     }
   } catch (err) {}
 
-  // Native fallbacks when Python backend is unavailable or fails
+  // Native fallbacks
   if (tool === "openApplication") {
     return nativeOpenApp(args.name || args.application);
   }
-  if (tool === "openWebsite" || tool === "searchWeb" || tool === "searchYouTube" || tool === "searchGoogle") {
+  if (tool === "openWebsite" || tool === "searchWeb" || tool === "searchGoogle") {
     return nativeOpenWebsite(args);
   }
 

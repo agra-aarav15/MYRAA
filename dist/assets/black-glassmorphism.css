@@ -1,57 +1,86 @@
 /* ==========================================================================
-   MYRAA — Premium Black Glassmorphism Aesthetic (Aarav Edition)
-   Dark Obsidian Glass, Ambient Nebula Glow, & Minimalist HUD
+   MYRAA — Pure Black Studio & Cyber Glassmorphism HUD (Aarav Edition)
+   Faithful recreation of reference photo aesthetics:
+   - Absolute #000000 pitch-black studio space
+   - Front reflective glossy mirror floor horizon under 3D avatar
+   - Curved cyber glass HUD visor bezel with specular reflection glares
+   - Ultra-clean obsidian frosted glass cards (backdrop-filter: blur(28px))
    ========================================================================== */
 
 :root {
-  --bg-obsidian: #020205;
-  --glass-bg: rgba(6, 6, 12, 0.72);
-  --glass-bg-subtle: rgba(255, 255, 255, 0.03);
-  --glass-border: rgba(255, 255, 255, 0.08);
-  --glass-border-hover: rgba(255, 255, 255, 0.18);
+  --bg-pure-black: #000000;
+  --bg-obsidian-subtle: #040407;
+  --glass-bg: rgba(6, 6, 12, 0.78);
+  --glass-bg-card: rgba(10, 10, 18, 0.82);
+  --glass-border: rgba(255, 255, 255, 0.09);
+  --glass-border-glow: rgba(255, 255, 255, 0.22);
   --glass-blur: blur(28px) saturate(190%);
-  --glass-shadow: 0 20px 50px -10px rgba(0, 0, 0, 0.9), 0 0 1px 1px rgba(255, 255, 255, 0.05), inset 0 1px 0 0 rgba(255, 255, 255, 0.12);
-  --accent-glow: rgba(168, 85, 247, 0.18);
-  --cyan-glow: rgba(6, 182, 212, 0.15);
+  --glass-shadow: 0 24px 60px -12px rgba(0, 0, 0, 0.95), 0 0 1px 1px rgba(255, 255, 255, 0.06), inset 0 1px 0 0 rgba(255, 255, 255, 0.14);
+  --specular-glare: linear-gradient(135deg, rgba(255, 255, 255, 0.18) 0%, rgba(255, 255, 255, 0.04) 25%, transparent 60%);
+  --mirror-reflection: linear-gradient(180deg, transparent 0%, rgba(255, 255, 255, 0.03) 70%, rgba(255, 255, 255, 0.08) 100%);
 }
 
-/* Base Body & High-Tech Obsidian Mesh */
+/* Base Body: Absolute Pitch-Black Studio Background */
 body, html {
-  background-color: var(--bg-obsidian) !important;
+  background-color: #000000 !important;
   color: #f1f5f9 !important;
-  overflow-x: hidden;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
   font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
+/* 1. Curved Cyber Glass Visor Frame (Matching ChatGPT Reference Image) */
 body::before {
   content: "";
   position: fixed;
-  inset: 0;
+  inset: 12px;
+  border-radius: 28px;
+  border: 1.5px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 
+    inset 0 1px 3px rgba(255, 255, 255, 0.25),
+    inset 0 0 40px rgba(0, 0, 0, 0.8),
+    0 0 20px rgba(0, 0, 0, 0.9);
   pointer-events: none;
-  z-index: 0;
+  z-index: 99;
   background: 
-    radial-gradient(circle at 50% 10%, rgba(99, 102, 241, 0.12) 0%, transparent 55%),
-    radial-gradient(circle at 85% 75%, rgba(168, 85, 247, 0.08) 0%, transparent 45%),
-    radial-gradient(circle at 15% 80%, rgba(6, 182, 212, 0.06) 0%, transparent 45%),
-    radial-gradient(circle at 50% 100%, rgba(2, 6, 23, 0.9) 0%, #000000 100%);
+    radial-gradient(ellipse at 8% 8%, rgba(255, 255, 255, 0.12) 0%, transparent 40%),
+    radial-gradient(ellipse at 92% 8%, rgba(255, 255, 255, 0.06) 0%, transparent 35%);
 }
 
-/* Subtle High-Tech Micro Grid Overlay */
+/* 2. Front Reflective Glossy Mirror Floor Effect */
 body::after {
   content: "";
   position: fixed;
-  inset: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 38vh;
   pointer-events: none;
-  z-index: 0;
-  opacity: 0.18;
-  background-image: 
-    linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
-  background-size: 32px 32px;
+  z-index: 1;
+  background: 
+    linear-gradient(180deg, transparent 0%, rgba(6, 6, 12, 0.4) 30%, rgba(12, 12, 22, 0.85) 85%, #000000 100%),
+    radial-gradient(ellipse at 50% 100%, rgba(255, 255, 255, 0.07) 0%, rgba(56, 189, 248, 0.03) 45%, transparent 75%);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 -10px 30px rgba(255, 255, 255, 0.02);
 }
 
-/* Premium Black Glassmorphic Panels & Floating Cards */
+/* Canvas container: Pure pitch black */
+canvas {
+  background-color: transparent !important;
+  position: relative;
+  z-index: 2;
+}
+
+/* Top Navigation Bar: Clean Cyber HUD */
+header, nav {
+  position: relative;
+  z-index: 50;
+}
+
+/* Premium Black Glassmorphic Panels & Floating Drawers */
 .bg-slate-900\/80,
 .bg-slate-900\/85,
 .bg-slate-900\/60,
@@ -60,49 +89,73 @@ body::after {
 .bg-slate-950\/90,
 .bg-slate-950\/70,
 .bg-\[\#020206\]\/95,
-#myraa-playwright-automation-hud > div {
-  background: var(--glass-bg) !important;
+#myraa-playwright-automation-hud > div,
+div[role="dialog"] {
+  background: var(--glass-bg-card) !important;
   backdrop-filter: var(--glass-blur) !important;
   -webkit-backdrop-filter: var(--glass-blur) !important;
   border: 1px solid var(--glass-border) !important;
   box-shadow: var(--glass-shadow) !important;
+  border-radius: 16px !important;
 }
 
 /* Sleek Floating Glass Pill Buttons */
 button {
-  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1) !important;
+  transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1) !important;
+  font-family: inherit;
 }
 
 button:hover {
-  border-color: var(--glass-border-hover) !important;
-  filter: brightness(1.08);
+  border-color: var(--glass-border-glow) !important;
+  filter: brightness(1.12);
+  transform: translateY(-1px);
+}
+
+button:active {
+  transform: translateY(0px);
 }
 
 /* Glass Inputs & Search Bars */
 input[type="text"],
 input[type="search"],
 textarea {
-  background: rgba(0, 0, 0, 0.5) !important;
-  backdrop-filter: blur(16px) !important;
-  -webkit-backdrop-filter: blur(16px) !important;
-  border: 1px solid rgba(255, 255, 255, 0.09) !important;
-  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.6) !important;
+  background: rgba(4, 4, 8, 0.7) !important;
+  backdrop-filter: blur(20px) !important;
+  -webkit-backdrop-filter: blur(20px) !important;
+  border: 1px solid rgba(255, 255, 255, 0.11) !important;
+  box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.7) !important;
   color: #f8fafc !important;
+  border-radius: 9999px !important;
+  padding: 12px 24px !important;
   transition: border-color 0.2s ease, box-shadow 0.2s ease !important;
 }
 
 input[type="text"]:focus,
 input[type="search"]:focus,
 textarea:focus {
-  border-color: rgba(168, 85, 247, 0.5) !important;
-  box-shadow: 0 0 16px rgba(168, 85, 247, 0.2), inset 0 2px 4px rgba(0, 0, 0, 0.6) !important;
+  border-color: rgba(255, 255, 255, 0.35) !important;
+  box-shadow: 0 0 20px rgba(255, 255, 255, 0.1), inset 0 2px 5px rgba(0, 0, 0, 0.7) !important;
   outline: none !important;
+}
+
+/* Circular Power / Audio Button */
+button:has(svg.lucide-power),
+button:has(svg path[d*="M18.36"]) {
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.08) 0%, rgba(10, 10, 20, 0.8) 100%) !important;
+  backdrop-filter: blur(20px) !important;
+  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.2) !important;
+}
+
+button:has(svg.lucide-power):hover {
+  border-color: rgba(255, 255, 255, 0.4) !important;
+  box-shadow: 0 0 20px rgba(255, 255, 255, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.3) !important;
 }
 
 /* Native App-Like Scrollbars */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
 }
 
 ::-webkit-scrollbar-track {
@@ -110,16 +163,20 @@ textarea:focus {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.15);
   border-radius: 9999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.24);
+  background: rgba(255, 255, 255, 0.3);
 }
 
 /* Mobile APK & Native Standalone Viewport */
 @media (display-mode: standalone), (max-width: 768px) {
+  body::before {
+    inset: 4px;
+    border-radius: 18px;
+  }
   body {
     user-select: none;
     -webkit-user-select: none;
