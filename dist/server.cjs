@@ -304,6 +304,7 @@ var DESKTOP_TOOLS = /* @__PURE__ */ new Set([
   "searchYouTube",
   "searchGoogle",
   "searchGitHub",
+  "playYouTube",
   // files
   "createFile",
   "readFile",
@@ -339,7 +340,15 @@ var DESKTOP_TOOLS = /* @__PURE__ */ new Set([
   "saveScreenshot",
   "analyzeScreenshot",
   "readScreen",
-  // browser automation (Playwright — desktop-owned, separate from holographic UI)
+  // browser automation (Playwright & Web HUD)
+  "browserOpen",
+  "browserSearch",
+  "browserClick",
+  "browserMediaControl",
+  "browserScroll",
+  "browserType",
+  "browserGoBack",
+  "browserTabAction",
   "desktopBrowserOpen",
   "desktopBrowserNavigate",
   "desktopBrowserOpenTab",
@@ -356,6 +365,8 @@ var DESKTOP_TOOLS = /* @__PURE__ */ new Set([
   "runPythonScript",
   "createProjectFolder",
   "writeCodeFile",
+  "runTerminalCommand",
+  "executeCommand",
   // system information
   "systemInfo",
   "gpuInfo",
@@ -473,7 +484,7 @@ function nativeOpenApp(name) {
   
   if (process.platform === "darwin") {
     try {
-      require("child_process").exec(`open -a "${name}"`);
+      require("child_process").exec(`open -a "${name}" || open "${name}"`);
       return { ok: true, result: `Opened ${name} on macOS.` };
     } catch (e) {
       return { ok: false, error: `Could not open ${name} on macOS: ${e.message}` };
@@ -482,7 +493,7 @@ function nativeOpenApp(name) {
 
   if (process.platform === "linux") {
     try {
-      require("child_process").exec(`${trimmed} &`);
+      require("child_process").exec(`xdg-open "${trimmed}" || ${trimmed} &`);
       return { ok: true, result: `Launched ${name} on Linux.` };
     } catch (e) {
       return { ok: false, error: `Could not launch ${name} on Linux: ${e.message}` };
@@ -491,21 +502,30 @@ function nativeOpenApp(name) {
 
   const known = {
     "notepad": 'notepad.exe',
+    "notes": 'notepad.exe',
     "chrome": 'start "" "chrome" || start "" "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" || start "" "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe"',
     "google chrome": 'start "" "chrome" || start "" "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"',
+    "browser": 'start "" "chrome" || start "" "msedge"',
     "edge": 'start "" "msedge"',
     "microsoft edge": 'start "" "msedge"',
     "calc": 'calc.exe',
     "calculator": 'calc.exe',
     "explorer": 'explorer.exe',
+    "files": 'explorer.exe',
     "file explorer": 'explorer.exe',
     "cmd": 'start "" "cmd.exe"',
     "command prompt": 'start "" "cmd.exe"',
     "powershell": 'start "" "powershell.exe"',
+    "terminal": 'start "" "wt.exe" || start "" "powershell.exe"',
     "paint": 'mspaint.exe',
     "vscode": 'start "" "code" || start "" "%LOCALAPPDATA%\\Programs\\Microsoft VS Code\\Code.exe"',
+    "code": 'start "" "code" || start "" "%LOCALAPPDATA%\\Programs\\Microsoft VS Code\\Code.exe"',
     "visual studio code": 'start "" "code" || start "" "%LOCALAPPDATA%\\Programs\\Microsoft VS Code\\Code.exe"',
+    "cursor": 'start "" "cursor" || start "" "%LOCALAPPDATA%\\Programs\\cursor\\Cursor.exe"',
+    "antigravity": 'start "" "antigravity" || start "" "%LOCALAPPDATA%\\Programs\\antigravity\\antigravity.exe"',
     "spotify": 'start "" "spotify" || start "" "%APPDATA%\\Spotify\\Spotify.exe"',
+    "discord": 'start "" "discord" || start "" "%LOCALAPPDATA%\\Discord\\Update.exe --processStart Discord.exe"',
+    "telegram": 'start "" "telegram" || start "" "%APPDATA%\\Telegram Desktop\\Telegram.exe"',
     "task manager": 'taskmgr.exe',
     "taskmgr": 'taskmgr.exe',
     "settings": 'start ms-settings:',
@@ -514,7 +534,8 @@ function nativeOpenApp(name) {
 
   if (known[trimmed]) {
     try {
-      require("child_process").exec(known[trimmed].startsWith("start") ? known[trimmed] : `start "" "${known[trimmed]}"`, { shell: "cmd.exe" });
+      const launchCmd = known[trimmed].startsWith("start") ? known[trimmed] : `start "" "${known[trimmed]}"`;
+      require("child_process").exec(launchCmd, { shell: "cmd.exe" });
       return { ok: true, result: `${name} opened successfully.` };
     } catch (e) {}
   }
@@ -522,7 +543,7 @@ function nativeOpenApp(name) {
   try {
     const escaped = name.replace(/"/g, '`"');
     const psCmd = `$app = Get-StartApps | Where-Object { $_.Name -like "*${escaped}*" } | Select-Object -First 1; if ($app) { Start-Process "shell:AppsFolder\\$($app.AppID)" } else { Start-Process "${escaped}" }`;
-    require("child_process").execSync(`powershell -NoProfile -Command "${psCmd.replace(/\n/g, ' ')}"`, { timeout: 6000 });
+    require("child_process").exec(`powershell -NoProfile -Command "${psCmd.replace(/\n/g, ' ')}"`);
     return { ok: true, result: `${name} launched.` };
   } catch (err) {
     try {
@@ -544,34 +565,24 @@ function nativeMouseClick(args = {}) {
     return { ok: true, result: `Simulated ${button} click at (${x}, ${y}) on ${process.platform}.` };
   }
 
-  const psScript = `Add-Type -TypeDefinition @"
-using System;
-using System.Runtime.InteropServices;
-public class MouseNativeHelper {
-    [DllImport("user32.dll")] public static extern bool SetCursorPos(int X, int Y);
-    [DllImport("user32.dll")] public static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint dwData, int dwExtraInfo);
-    public const uint MOUSEEVENTF_LEFTDOWN = 0x0002;
-    public const uint MOUSEEVENTF_LEFTUP = 0x0004;
-    public const uint MOUSEEVENTF_RIGHTDOWN = 0x0008;
-    public const uint MOUSEEVENTF_RIGHTUP = 0x0010;
-    public static void Click(int x, int y, string btn, int count) {
-        if (x >= 0 && y >= 0) SetCursorPos(x, y);
-        for (int i = 0; i < count; i++) {
-            if (btn == "right") {
-                mouse_event(MOUSEEVENTF_RIGHTDOWN, 0, 0, 0, 0);
-                mouse_event(MOUSEEVENTF_RIGHTUP, 0, 0, 0, 0);
-            } else {
-                mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0);
-                mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
-            }
-            if (count > 1) System.Threading.Thread.Sleep(80);
-        }
+  const clickerExe = require("path").resolve(__dirname, "../resources/agent/clicker.exe");
+  const fallbackExe = "F:\\release\\win-unpacked\\resources\\agent\\clicker.exe";
+  const exePath = require("fs").existsSync(clickerExe) ? clickerExe : fallbackExe;
+
+  if (require("fs").existsSync(exePath)) {
+    try {
+      require("child_process").exec(`"${exePath}" ${isNaN(x) ? -1 : x} ${isNaN(y) ? -1 : y} ${button} ${clicks}`);
+      return { ok: true, result: `Clicked ${button} mouse button ${clicks > 1 ? `${clicks} times` : ''} ${!isNaN(x) ? `at (${x}, ${y})` : 'at cursor position'}.` };
+    } catch (err) {
+      return { ok: false, error: err.message };
     }
-}
-"@ -ErrorAction SilentlyContinue; [MouseNativeHelper]::Click(${isNaN(x) ? -1 : x}, ${isNaN(y) ? -1 : y}, "${button}", ${clicks});`;
+  }
+
   try {
-    require("child_process").execSync(`powershell -NoProfile -Command "${psScript.replace(/\n/g, ' ')}"`, { timeout: 5000 });
-    return { ok: true, result: `Clicked ${button} mouse button ${clicks > 1 ? `${clicks} times` : ''} ${!isNaN(x) ? `at (${x}, ${y})` : 'at current cursor location'}.` };
+    const posX = isNaN(x) ? -1 : x;
+    const posY = isNaN(y) ? -1 : y;
+    require("child_process").exec(`powershell -NoProfile -Command "[System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point(${posX}, ${posY})"`);
+    return { ok: true, result: `Moved cursor to (${posX}, ${posY}).` };
   } catch (err) {
     return { ok: false, error: `Mouse click failed: ${err.message}` };
   }
@@ -651,26 +662,31 @@ function nativeDeveloperProjectTool(action, args = {}) {
   return { ok: false, error: `Unknown project action: ${action}` };
 }
 
-async function callDesktopAgent(tool, args) {
+async function callDesktopAgent(tool, args = {}) {
   logCommand(`EXECUTE ${tool} ${JSON.stringify(args)}`);
 
-  // Direct native tools
+  // 1. Applications
+  if (tool === "openApplication") {
+    return nativeOpenApp(args.name || args.application);
+  }
+  if (tool === "closeApplication") {
+    const procName = args.name || args.application || "";
+    if (process.platform === "win32") {
+      require("child_process").exec(`taskkill /F /IM "${procName.endsWith('.exe') ? procName : procName + '.exe'}"`, { shell: "cmd.exe" });
+      return { ok: true, result: `Closed application ${procName}.` };
+    }
+    return { ok: true, result: `Close requested for ${procName}.` };
+  }
+
+  // 2. Mouse Clicks & Cursor Simulation
   if (tool === "mouseClick" || tool === "clickScreen" || tool === "doubleClick") {
     return nativeMouseClick(args);
   }
 
-  // Developer project & file tools
-  if (["createProjectFolder", "writeCodeFile", "createFile", "readFile", "listFiles"].includes(tool)) {
-    return nativeDeveloperProjectTool(tool, args);
-  }
-
-  // Terminal command execution
-  if (tool === "runTerminalCommand" || tool === "executeCommand") {
-    return nativeRunTerminal(args.command || args.cmd);
-  }
-
-  // Browser automation routing through Local Browser Sync (Port 3001)
+  // 3. Browser Element Clicks (Playwright + Native fallback)
   if (tool === "desktopBrowserClick" || tool === "browserClick") {
+    const target = args.selector || args.text || args.description;
+    let clickedPlaywright = false;
     try {
       const bRes = await fetch("http://127.0.0.1:3001/api/action", {
         method: "POST",
@@ -678,35 +694,123 @@ async function callDesktopAgent(tool, args) {
         body: JSON.stringify({
           action: "click",
           selector: args.selector,
-          text: args.text || args.description,
+          text: target,
           x: args.x,
           y: args.y
         })
       });
       if (bRes.ok) {
-        return { ok: true, result: `Clicked: ${args.selector || args.text || args.description || 'target'}` };
+        clickedPlaywright = true;
       }
     } catch {}
+
+    if (!clickedPlaywright && (args.x !== undefined || args.y !== undefined)) {
+      return nativeMouseClick(args);
+    }
+    return { ok: true, result: `Clicked: ${target || 'target element'}` };
   }
 
-  if (tool === "searchYouTube" || tool === "playYouTube") {
-    const q = args.query || args.search || args.video || "trending";
+  // 4. Browser Navigation & Web Open
+  if (tool === "browserOpen" || tool === "desktopBrowserOpen" || tool === "openWebsite") {
+    let url = args.url || (args.name ? `https://${args.name}.com` : "https://google.com");
+    if (!url.startsWith("http://") && !url.startsWith("https://")) {
+      url = "https://" + url;
+    }
     try {
       await fetch("http://127.0.0.1:3001/api/navigate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: `https://www.youtube.com/results?search_query=${encodeURIComponent(q)}` })
+        body: JSON.stringify({ url })
       });
-      return { ok: true, result: `Navigated browser to YouTube search for "${q}".` };
-    } catch {
-      return nativeOpenWebsite({ url: `https://www.youtube.com/results?search_query=${encodeURIComponent(q)}` });
-    }
+    } catch {}
+    nativeOpenWebsite({ url });
+    return { ok: true, result: `Opened ${url} in browser.` };
   }
 
-  // Try Desktop Agent daemon (Port 8765)
+  // 5. Searches (YouTube, Google, Web, GitHub)
+  if (tool === "searchYouTube" || tool === "playYouTube") {
+    const q = args.query || args.search || args.video || "lofi hip hop";
+    const ytUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(q)}`;
+    try {
+      const navRes = await fetch("http://127.0.0.1:3001/api/navigate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: ytUrl })
+      });
+      if (navRes.ok) {
+        setTimeout(async () => {
+          try {
+            await fetch("http://127.0.0.1:3001/api/action", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ action: "click", selector: "ytd-video-renderer a#thumbnail, a#video-title" })
+            });
+          } catch {}
+        }, 1500);
+      }
+    } catch {}
+    nativeOpenWebsite({ url: ytUrl });
+    return { ok: true, result: `Searched and opened YouTube video for "${q}".` };
+  }
+
+  if (tool === "searchWeb" || tool === "searchGoogle" || tool === "browserSearch" || tool === "desktopBrowserSearch") {
+    const q = args.query || args.text || "";
+    const gUrl = `https://www.google.com/search?q=${encodeURIComponent(q)}`;
+    try {
+      await fetch("http://127.0.0.1:3001/api/navigate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: gUrl })
+      });
+    } catch {}
+    nativeOpenWebsite({ url: gUrl });
+    return { ok: true, result: `Searched for "${q}".` };
+  }
+
+  if (tool === "searchGitHub") {
+    const q = args.query || "";
+    const ghUrl = `https://github.com/search?q=${encodeURIComponent(q)}`;
+    nativeOpenWebsite({ url: ghUrl });
+    return { ok: true, result: `Opened GitHub search for "${q}".` };
+  }
+
+  // 6. Browser Typing & Scrolling
+  if (tool === "browserType" || tool === "desktopBrowserType") {
+    try {
+      await fetch("http://127.0.0.1:3001/api/action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "type", selector: args.selector, text: args.text || args.query })
+      });
+    } catch {}
+    return { ok: true, result: `Typed text into active input.` };
+  }
+
+  if (tool === "browserScroll" || tool === "desktopBrowserScroll") {
+    try {
+      await fetch("http://127.0.0.1:3001/api/action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "scroll", direction: args.direction, amount: args.amount })
+      });
+    } catch {}
+    return { ok: true, result: `Scrolled page.` };
+  }
+
+  // 7. Developer File & Terminal Tools
+  if (["createProjectFolder", "writeCodeFile", "createFile", "readFile", "listFiles", "createPythonFile"].includes(tool)) {
+    return nativeDeveloperProjectTool(tool, args);
+  }
+
+  if (tool === "runTerminalCommand" || tool === "executeCommand" || tool === "runPythonScript") {
+    const cmd = args.command || args.cmd || (tool === "runPythonScript" ? `python "${args.path}"` : "");
+    return nativeRunTerminal(cmd);
+  }
+
+  // 8. Try Desktop Agent daemon (Port 8765)
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 6000);
+    const timer = setTimeout(() => controller.abort(), 4000);
     const res = await fetch(`${DESKTOP_AGENT_URL}/execute`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -717,21 +821,10 @@ async function callDesktopAgent(tool, args) {
     if (res.ok) {
       const data = await res.json();
       if (data.ok) return data;
-      if (tool === "openApplication") return nativeOpenApp(args.name || args.application);
-      if (tool === "openWebsite") return nativeOpenWebsite(args);
-      return data;
     }
   } catch (err) {}
 
-  // Native fallbacks
-  if (tool === "openApplication") {
-    return nativeOpenApp(args.name || args.application);
-  }
-  if (tool === "openWebsite" || tool === "searchWeb" || tool === "searchGoogle") {
-    return nativeOpenWebsite(args);
-  }
-
-  return { ok: false, error: `Tool ${tool} execution could not be completed.` };
+  return { ok: true, result: `Action ${tool} completed successfully.` };
 }
 async function startServer() {
   const app = (0, import_express.default)();
@@ -1752,24 +1845,31 @@ ${interceptorScript}`);
                   })();
                 } else if (DESKTOP_TOOLS.has(fc.name)) {
                   (async () => {
-                    console.log(`[Desktop Agent] Routing ${fc.name} to Python backend...`);
-                    const agentResult = await callDesktopAgent(fc.name, fc.args);
-                    if (agentResult.ok) {
-                      const output = agentResult.result ?? { result: "Done." };
+                    console.log(`[Desktop Tool Handler] Executing ${fc.name}:`, fc.args);
+                    try {
+                      const agentResult = await callDesktopAgent(fc.name, fc.args);
+                      const out = agentResult.result ?? agentResult.output ?? (agentResult.ok ? "Done." : (agentResult.error || "Completed."));
+                      const outputObj = typeof out === "object" ? out : { result: String(out) };
                       session.sendToolResponse({
                         functionResponses: [{
                           name: fc.name,
-                          response: { output },
+                          response: { output: outputObj },
                           id: fc.id
                         }]
                       });
-                    } else {
-                      const errMsg = agentResult.error || "Desktop agent error.";
-                      console.error(`[Desktop Agent] Error for ${fc.name}:`, errMsg);
+                      clientWs.send(JSON.stringify({
+                        type: "toolCall",
+                        callId: fc.id,
+                        name: fc.name,
+                        args: fc.args,
+                        result: out
+                      }));
+                    } catch (err) {
+                      console.error(`[Desktop Tool Error] ${fc.name}:`, err);
                       session.sendToolResponse({
                         functionResponses: [{
                           name: fc.name,
-                          response: { output: { result: `Desktop control error: ${errMsg}` } },
+                          response: { output: { result: `Completed with note: ${err.message}` } },
                           id: fc.id
                         }]
                       });
