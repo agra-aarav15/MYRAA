@@ -542,79 +542,112 @@ function isUnix() {
   return process.platform === "darwin" || process.platform === "linux";
 }
 
+function getClickerExePath() {
+  const possiblePaths = [
+    path.resolve(__dirname, "../../agent/clicker.exe"),
+    path.resolve(__dirname, "../agent/clicker.exe"),
+    path.resolve(__dirname, "agent/clicker.exe"),
+    path.join(process.resourcesPath || "", "agent", "clicker.exe"),
+    path.resolve(process.cwd(), "resources/agent/clicker.exe"),
+    path.resolve(process.cwd(), "../agent/clicker.exe"),
+    "F:\\release\\win-unpacked\\resources\\agent\\clicker.exe"
+  ];
+  for (const p of possiblePaths) {
+    if (p && fs.existsSync(p)) return p;
+  }
+  return null;
+}
+
 function nativeOpenApp(name) {
   if (!name) return { ok: false, error: "Application name is required" };
   const trimmed = name.trim().toLowerCase();
-  
+  logCommand("OPEN_APP: " + name);
+
   if (process.platform === "darwin") {
     try {
-      require("child_process").exec(`open -a "${name}" || open "${name}"`);
-      return { ok: true, result: `Opened ${name} on macOS.` };
+      require("child_process").exec("open -a \"" + name + "\" || open \"" + name + "\"");
+      return { ok: true, result: "Opened " + name + " on macOS." };
     } catch (e) {
-      return { ok: false, error: `Could not open ${name} on macOS: ${e.message}` };
+      return { ok: false, error: "Could not open " + name + " on macOS: " + e.message };
     }
   }
 
   if (process.platform === "linux") {
     try {
-      require("child_process").exec(`xdg-open "${trimmed}" || ${trimmed} &`);
-      return { ok: true, result: `Launched ${name} on Linux.` };
+      require("child_process").exec("xdg-open \"" + trimmed + "\" || " + trimmed + " &");
+      return { ok: true, result: "Launched " + name + " on Linux." };
     } catch (e) {
-      return { ok: false, error: `Could not launch ${name} on Linux: ${e.message}` };
+      return { ok: false, error: "Could not launch " + name + " on Linux: " + e.message };
     }
   }
 
   const known = {
-    "notepad": 'notepad.exe',
-    "notes": 'notepad.exe',
-    "chrome": 'start "" "chrome" || start "" "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" || start "" "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe"',
-    "google chrome": 'start "" "chrome" || start "" "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"',
-    "browser": 'start "" "chrome" || start "" "msedge"',
-    "edge": 'start "" "msedge"',
-    "microsoft edge": 'start "" "msedge"',
-    "calc": 'calc.exe',
-    "calculator": 'calc.exe',
-    "explorer": 'explorer.exe',
-    "files": 'explorer.exe',
-    "file explorer": 'explorer.exe',
-    "cmd": 'start "" "cmd.exe"',
-    "command prompt": 'start "" "cmd.exe"',
-    "powershell": 'start "" "powershell.exe"',
-    "terminal": 'start "" "wt.exe" || start "" "powershell.exe"',
-    "paint": 'mspaint.exe',
-    "vscode": 'start "" "code" || start "" "%LOCALAPPDATA%\\Programs\\Microsoft VS Code\\Code.exe"',
-    "code": 'start "" "code" || start "" "%LOCALAPPDATA%\\Programs\\Microsoft VS Code\\Code.exe"',
-    "visual studio code": 'start "" "code" || start "" "%LOCALAPPDATA%\\Programs\\Microsoft VS Code\\Code.exe"',
-    "cursor": 'start "" "cursor" || start "" "%LOCALAPPDATA%\\Programs\\cursor\\Cursor.exe"',
-    "antigravity": 'start "" "antigravity" || start "" "%LOCALAPPDATA%\\Programs\\antigravity\\antigravity.exe"',
-    "spotify": 'start "" "spotify" || start "" "%APPDATA%\\Spotify\\Spotify.exe"',
-    "discord": 'start "" "discord" || start "" "%LOCALAPPDATA%\\Discord\\Update.exe --processStart Discord.exe"',
-    "telegram": 'start "" "telegram" || start "" "%APPDATA%\\Telegram Desktop\\Telegram.exe"',
-    "task manager": 'taskmgr.exe',
-    "taskmgr": 'taskmgr.exe',
-    "settings": 'start ms-settings:',
-    "snipping tool": 'start ms-screenclip:'
+    "notepad": { exe: "notepad.exe", title: "Notepad" },
+    "notes": { exe: "notepad.exe", title: "Notepad" },
+    "calc": { exe: "calc.exe", title: "Calculator" },
+    "calculator": { exe: "calc.exe", title: "Calculator" },
+    "chrome": { exe: "chrome.exe", title: "Chrome" },
+    "google chrome": { exe: "chrome.exe", title: "Chrome" },
+    "browser": { exe: "chrome.exe", title: "Chrome" },
+    "edge": { exe: "msedge.exe", title: "Edge" },
+    "microsoft edge": { exe: "msedge.exe", title: "Edge" },
+    "explorer": { exe: "explorer.exe", title: "File Explorer" },
+    "files": { exe: "explorer.exe", title: "File Explorer" },
+    "file explorer": { exe: "explorer.exe", title: "File Explorer" },
+    "cmd": { exe: "cmd.exe", title: "Command Prompt" },
+    "command prompt": { exe: "cmd.exe", title: "Command Prompt" },
+    "powershell": { exe: "powershell.exe", title: "PowerShell" },
+    "terminal": { exe: "wt.exe", title: "Terminal" },
+    "paint": { exe: "mspaint.exe", title: "Paint" },
+    "vscode": { exe: "code", title: "Visual Studio Code" },
+    "code": { exe: "code", title: "Visual Studio Code" },
+    "visual studio code": { exe: "code", title: "Visual Studio Code" },
+    "cursor": { exe: "cursor", title: "Cursor" },
+    "antigravity": { exe: "antigravity", title: "Antigravity" },
+    "spotify": { exe: "spotify", title: "Spotify" },
+    "discord": { exe: "discord", title: "Discord" },
+    "telegram": { exe: "telegram", title: "Telegram" },
+    "task manager": { exe: "taskmgr.exe", title: "Task Manager" },
+    "taskmgr": { exe: "taskmgr.exe", title: "Task Manager" },
+    "settings": { exe: "start ms-settings:", title: "Settings" },
+    "snipping tool": { exe: "start ms-screenclip:", title: "Snipping Tool" }
   };
 
-  if (known[trimmed]) {
-    try {
-      const launchCmd = known[trimmed].startsWith("start") ? known[trimmed] : `start "" "${known[trimmed]}"`;
-      require("child_process").exec(launchCmd, { shell: "cmd.exe" });
-      return { ok: true, result: `${name} opened successfully.` };
-    } catch (e) {}
-  }
+  const appInfo = known[trimmed];
+  const targetExe = appInfo ? appInfo.exe : trimmed;
+  const targetTitle = appInfo ? appInfo.title : name;
+
+  const ps = `
+    $target = "${targetExe}";
+    $title = "${targetTitle}";
+    if ($target -like "start *") {
+      Invoke-Expression $target;
+    } else {
+      $p = Start-Process -FilePath $target -PassThru -WindowStyle Normal -ErrorAction SilentlyContinue;
+      if (-not $p) {
+        $app = Get-StartApps | Where-Object { $_.Name -like "*${name}*" } | Select-Object -First 1;
+        if ($app) {
+          Start-Process "shell:AppsFolder\\$($app.AppID)" -WindowStyle Normal;
+        } else {
+          Start-Process $target -WindowStyle Normal;
+        }
+      }
+    }
+    Start-Sleep -Milliseconds 450;
+    $wshell = New-Object -ComObject WScript.Shell;
+    if ($p -and $p.Id) { $wshell.AppActivate($p.Id); }
+    else { $wshell.AppActivate($title); }
+  `;
 
   try {
-    const escaped = name.replace(/"/g, '`"');
-    const psCmd = `$app = Get-StartApps | Where-Object { $_.Name -like "*${escaped}*" } | Select-Object -First 1; if ($app) { Start-Process "shell:AppsFolder\\$($app.AppID)" } else { Start-Process "${escaped}" }`;
-    require("child_process").exec(`powershell -NoProfile -Command "${psCmd.replace(/\n/g, ' ')}"`);
-    return { ok: true, result: `${name} launched.` };
+    require("child_process").execSync(`powershell -NoProfile -ExecutionPolicy Bypass -Command "${ps.replace(/\n/g, " ")}"`, { timeout: 8000 });
+    return { ok: true, result: name + " opened in the foreground." };
   } catch (err) {
     try {
-      require("child_process").exec(`start "" "${name}"`, { shell: "cmd.exe" });
-      return { ok: true, result: `Sent launch command for ${name}.` };
+      require("child_process").exec(`start "" "${targetExe}"`, { shell: "cmd.exe" });
+      return { ok: true, result: name + " launched." };
     } catch (e2) {
-      return { ok: false, error: `Could not launch ${name}: ${err.message}` };
+      return { ok: false, error: "Could not launch " + name + ": " + err.message };
     }
   }
 }
@@ -622,33 +655,66 @@ function nativeOpenApp(name) {
 function nativeMouseClick(args = {}) {
   const x = Number(args.x);
   const y = Number(args.y);
-  const button = (args.button || "left").toLowerCase();
-  const clicks = Number(args.clicks) || 1;
-  
+  let button = (args.button || "left").toLowerCase();
+  let clicks = Number(args.clicks) || 1;
+  if (args.double || button === "double") {
+    button = "double";
+  }
+  logCommand("MOUSE_CLICK: (" + x + ", " + y + ") " + button + " " + clicks + "x");
+
   if (process.platform !== "win32") {
-    return { ok: true, result: `Simulated ${button} click at (${x}, ${y}) on ${process.platform}.` };
+    return { ok: true, result: "Simulated " + button + " click at (" + x + ", " + y + ") on " + process.platform + "." };
   }
 
-  const clickerExe = require("path").resolve(__dirname, "../resources/agent/clicker.exe");
-  const fallbackExe = "F:\\release\\win-unpacked\\resources\\agent\\clicker.exe";
-  const exePath = require("fs").existsSync(clickerExe) ? clickerExe : fallbackExe;
-
-  if (require("fs").existsSync(exePath)) {
+  const exePath = getClickerExePath();
+  if (exePath) {
     try {
-      require("child_process").exec(`"${exePath}" ${isNaN(x) ? -1 : x} ${isNaN(y) ? -1 : y} ${button} ${clicks}`);
-      return { ok: true, result: `Clicked ${button} mouse button ${clicks > 1 ? `${clicks} times` : ''} ${!isNaN(x) ? `at (${x}, ${y})` : 'at cursor position'}.` };
-    } catch (err) {
-      return { ok: false, error: err.message };
-    }
+      const out = require("child_process").execSync(`"${exePath}" ${isNaN(x) ? -1 : x} ${isNaN(y) ? -1 : y} ${button} ${clicks}`, { encoding: "utf8", timeout: 3000 });
+      return { ok: true, result: "Clicked " + button + " mouse button " + (clicks > 1 ? clicks + " times " : "") + (!isNaN(x) && x >= 0 ? "at (" + x + ", " + y + ")" : "at cursor position") + "." };
+    } catch (err) {}
   }
 
   try {
-    const posX = isNaN(x) ? -1 : x;
-    const posY = isNaN(y) ? -1 : y;
-    require("child_process").exec(`powershell -NoProfile -Command "[System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point(${posX}, ${posY})"`);
-    return { ok: true, result: `Moved cursor to (${posX}, ${posY}).` };
+    const isRight = button === "right";
+    const down = isRight ? "0x0008" : "0x0002";
+    const up = isRight ? "0x0010" : "0x0004";
+    let ps = `
+      if (-not ([System.Management.Automation.PSTypeName]"Win32.NativeInput").Type) {
+        Add-Type -MemberDefinition "[DllImport(\"user32.dll\")] public static extern void mouse_event(uint f, uint x, uint y, uint d, int e); [DllImport(\"user32.dll\")] public static extern bool SetCursorPos(int x, int y);" -Name NativeInput -Namespace Win32;
+      }
+    `;
+    if (!isNaN(x) && x >= 0 && !isNaN(y) && y >= 0) {
+      ps += ` [Win32.NativeInput]::SetCursorPos(${x}, ${y}); `;
+    }
+    for (let i = 0; i < clicks; i++) {
+      ps += ` [Win32.NativeInput]::mouse_event(${down}, 0, 0, 0, 0); [Win32.NativeInput]::mouse_event(${up}, 0, 0, 0, 0); `;
+    }
+    require("child_process").execSync(`powershell -NoProfile -ExecutionPolicy Bypass -Command "${ps.replace(/\n/g, " ")}"`, { timeout: 3000 });
+    return { ok: true, result: "Clicked " + button + " mouse button." };
   } catch (err) {
-    return { ok: false, error: `Mouse click failed: ${err.message}` };
+    return { ok: false, error: "Mouse click failed: " + err.message };
+  }
+}
+
+function nativeTypeText(text) {
+  if (!text) return { ok: false, error: "Text parameter is required." };
+  logCommand("TYPE_TEXT: " + text.slice(0, 50));
+
+  const exePath = getClickerExePath();
+  if (exePath) {
+    try {
+      const clean = text.replace(/"/g, "\"");
+      require("child_process").execSync(`"${exePath}" type "${clean}"`, { encoding: "utf8", timeout: 4000 });
+      return { ok: true, result: "Typed text (" + text.length + " chars)." };
+    } catch (e) {}
+  }
+
+  try {
+    const escaped = text.replace(/[{}+^%~()\[\]]/g, "{$&}").replace(/"/g, "`\"");
+    require("child_process").execSync(`powershell -NoProfile -Command "$wshell = New-Object -ComObject WScript.Shell; $wshell.SendKeys(\"${escaped}\")"`, { timeout: 4000 });
+    return { ok: true, result: "Typed text into active window." };
+  } catch (e2) {
+    return { ok: false, error: e2.message };
   }
 }
 
@@ -727,6 +793,61 @@ function nativeDeveloperProjectTool(action, args = {}) {
 }
 
 async function callDesktopAgent(tool, args = {}) {
+  logCommand("EXECUTE " + tool + " " + JSON.stringify(args));
+
+  // 1. Applications
+  if (tool === "openApplication" || tool === "openApp" || tool === "launchApp") {
+    return nativeOpenApp(args.name || args.application || args.appName);
+  }
+  if (tool === "closeApplication" || tool === "closeApp") {
+    const procName = args.name || args.application || args.appName || "";
+    if (process.platform === "win32") {
+      require("child_process").exec(`taskkill /F /IM "${procName.endsWith(".exe") ? procName : procName + ".exe"}"`, { shell: "cmd.exe" });
+      return { ok: true, result: "Closed application " + procName + "." };
+    }
+    return { ok: true, result: "Close requested for " + procName + "." };
+  }
+
+  // 2. Mouse Clicks, Move, Drag, Typing & Clipboard
+  if (["mouseClick", "clickScreen", "doubleClick", "rightClick", "click"].includes(tool)) {
+    return nativeMouseClick(args);
+  }
+  if (tool === "typeText" || tool === "keyboardType" || tool === "desktopType" || tool === "type" || tool === "pasteClipboard") {
+    const text = args.text || args.content || args.string || "";
+    if (tool === "pasteClipboard" && args.text) {
+      try {
+        const escaped = args.text.replace(/"/g, "`\"");
+        require("child_process").execSync(`powershell -NoProfile -Command "Set-Clipboard -Value \"${escaped}\""`, { timeout: 2000 });
+        const clickerExe = getClickerExePath();
+        if (clickerExe) {
+          require("child_process").execSync(`"${clickerExe}" press ctrl+v`, { timeout: 2000 });
+        } else {
+          require("child_process").execSync(`powershell -NoProfile -Command "$wshell = New-Object -ComObject WScript.Shell; $wshell.SendKeys('^v')"`, { timeout: 2000 });
+        }
+        return { ok: true, result: "Pasted text (" + args.text.length + " chars) into focused window." };
+      } catch (e) {}
+    }
+    return nativeTypeText(text);
+  }
+  if (tool === "mouseMove" || tool === "moveCursor") {
+    const clickerExe = getClickerExePath();
+    if (clickerExe && !isNaN(args.x) && !isNaN(args.y)) {
+      try {
+        require("child_process").execSync(`"${clickerExe}" move ${args.x} ${args.y}`, { timeout: 2000 });
+        return { ok: true, result: "Moved mouse cursor to (" + args.x + ", " + args.y + ")." };
+      } catch (e) {}
+    }
+  }
+  if (tool === "mouseScroll" || tool === "scrollMouse") {
+    const clickerExe = getClickerExePath();
+    const amount = Number(args.amount || args.lines || 5);
+    if (clickerExe) {
+      try {
+        require("child_process").execSync(`"${clickerExe}" scroll ${amount}`, { timeout: 2000 });
+        return { ok: true, result: "Scrolled mouse by " + amount + "." };
+      } catch (e) {}
+    }
+  }
   logCommand(`EXECUTE ${tool} ${JSON.stringify(args)}`);
 
   // 1. Applications
