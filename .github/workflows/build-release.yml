@@ -33,13 +33,27 @@ jobs:
       - name: Install Dependencies
         run: npm install --no-audit
 
-      - name: Package with Electron Builder (NSIS & Portable)
+      - name: Compile Native C# Launcher
         shell: pwsh
         run: |
           if (Test-Path "build") { } else { New-Item -ItemType Directory -Path "build" -Force }
           if (Test-Path "icon.ico") { Copy-Item "icon.ico" -Destination "build/icon.ico" -Force }
           if (Test-Path "icon.png") { Copy-Item "icon.png" -Destination "build/icon.png" -Force }
-          npx electron-builder --win --x64 --config.directories.output=release_dist || Write-Warning "electron-builder completed with fallback"
+          
+          $csc = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
+          if (-not (Test-Path $csc)) {
+            $cmd = Get-Command csc -ErrorAction SilentlyContinue
+            if ($cmd) { $csc = $cmd.Source }
+          }
+          if ($csc -and (Test-Path "electron/launcher.cs")) {
+            Write-Host "Compiling C# launcher with $csc..."
+            & $csc /target:winexe /out:build/MYRAA-launcher.exe /win32icon:build/icon.ico electron/launcher.cs || Write-Warning "CSC compilation warning"
+          }
+
+      - name: Package with Electron Builder (NSIS & Portable)
+        shell: pwsh
+        run: |
+          npx electron-builder --win --x64 --config.directories.output=release_dist
 
       - name: Package Universal Standalone ZIP
         shell: pwsh
