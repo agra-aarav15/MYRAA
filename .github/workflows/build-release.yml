@@ -31,7 +31,7 @@ jobs:
           node-version: 20
 
       - name: Install Dependencies
-        run: npm install --no-audit
+        run: npm install --no-audit --include=dev
 
       - name: Package with Electron Builder (NSIS & Portable)
         shell: pwsh
@@ -39,7 +39,7 @@ jobs:
           if (Test-Path "build") { } else { New-Item -ItemType Directory -Path "build" -Force }
           if (Test-Path "icon.ico") { Copy-Item "icon.ico" -Destination "build/icon.ico" -Force }
           if (Test-Path "icon.png") { Copy-Item "icon.png" -Destination "build/icon.png" -Force }
-          npx electron-builder --win --x64 --config.directories.output=release_dist
+          npx --yes electron-builder --win --x64 --config.directories.output=release_dist
 
       - name: Package Universal Standalone ZIP
         shell: pwsh
