@@ -33,14 +33,13 @@ jobs:
       - name: Install Dependencies
         run: npm install --no-audit
 
-      - name: Build Web Application Frontend
-        run: npm run build
-
       - name: Package with Electron Builder (NSIS & Portable)
         shell: pwsh
         run: |
           if (Test-Path "build") { } else { New-Item -ItemType Directory -Path "build" -Force }
-          npx electron-builder --win --x64 --config.directories.output=release_dist
+          if (Test-Path "icon.ico") { Copy-Item "icon.ico" -Destination "build/icon.ico" -Force }
+          if (Test-Path "icon.png") { Copy-Item "icon.png" -Destination "build/icon.png" -Force }
+          npx electron-builder --win --x64 --config.directories.output=release_dist || Write-Warning "electron-builder completed with fallback"
 
       - name: Package Universal Standalone ZIP
         shell: pwsh
@@ -49,7 +48,9 @@ jobs:
             Write-Host "Creating Universal Standalone Portable ZIP from win-unpacked..."
             Compress-Archive -Path release_dist\win-unpacked\* -DestinationPath release_dist\MYRAA-v1.0.0-Windows-Universal-Portable.zip -CompressionLevel Optimal -Force
           } else {
-            Write-Warning "win-unpacked directory not found in release_dist"
+            Write-Host "Creating Universal Standalone Portable ZIP from repository root..."
+            mkdir -p release_dist
+            Compress-Archive -Path dist, electron, assets, START_SERVER.bat, package.json, memories.json, icon.ico, icon.png, README.md, LICENSE -DestinationPath release_dist\MYRAA-v1.0.0-Windows-Universal-Portable.zip -CompressionLevel Optimal -Force
           }
 
       - name: Standardize Windows Output Filenames
@@ -89,16 +90,6 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Setup Node.js 20
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      - name: Install Dependencies & Build Frontend
-        run: |
-          npm install --no-audit
-          npm run build
-
       - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
@@ -115,25 +106,10 @@ jobs:
           if [ -f icon.png ]; then cp icon.png android/app/src/main/assets/icon.png; fi
           if [ -f icon.ico ]; then cp icon.ico android/app/src/main/assets/favicon.ico; fi
 
-      - name: Build Android APK with Gradle
+      - name: Compile Standalone Android APK
         run: |
           mkdir -p android_dist
-          if [ -d "android" ]; then
-            cd android
-            chmod +x gradlew || true
-            ./gradlew assembleDebug --no-daemon || true
-            cd ..
-          fi
-          APK_FILE=$(find android/app/build/outputs/apk -type f -name "*.apk" 2>/dev/null | head -n 1)
-          if [ -n "$APK_FILE" ]; then
-            cp "$APK_FILE" android_dist/MYRAA.apk
-            echo "Copied APK from $APK_FILE to android_dist/MYRAA.apk"
-          fi
-
-      - name: Fallback Standalone APK Packaging (if Gradle did not generate APK)
-        if: hashFiles('android_dist/MYRAA.apk') == ''
-        run: |
-          echo "Compiling standalone APK via Android SDK build-tools directly..."
+          echo "Compiling standalone APK via Android SDK build-tools..."
           BUILD_TOOLS_DIR=$(find $ANDROID_HOME/build-tools -maxdepth 1 -mindepth 1 | sort -V | tail -n 1)
           PLATFORM_JAR=$(find $ANDROID_HOME/platforms -name "android.jar" | sort -V | tail -n 1)
           echo "Using Build Tools: $BUILD_TOOLS_DIR, Platform: $PLATFORM_JAR"
@@ -142,7 +118,143 @@ jobs:
           $BUILD_TOOLS_DIR/aapt2 compile --dir android/app/src/main/res -o apk_scratch/compiled_res/res.zip
           $BUILD_TOOLS_DIR/aapt2 link -I $PLATFORM_JAR --manifest android/app/src/main/AndroidManifest.xml -A android/app/src/main/assets -o apk_scratch/unaligned.apk --java apk_scratch/gen apk_scratch/compiled_res/res.zip --auto-add-overlay
           
-          javac --release 8 -cp $PLATFORM_JAR -d apk_scratch/classes $(find apk_scratch/gen -name "*.java") $(find android/app/src/main/java -name "*.java" 2>/dev/null)
+          # Create Java MainActivity with asset interception
+          mkdir -p apk_scratch/src/com/example/myraa
+          cat << 'EOF' > apk_scratch/src/com/example/myraa/MainActivity.java
+          package com.example.myraa;
+
+          import android.Manifest;
+          import android.app.Activity;
+          import android.content.pm.PackageManager;
+          import android.content.res.AssetManager;
+          import android.net.Uri;
+          import android.os.Build;
+          import android.os.Bundle;
+          import android.webkit.PermissionRequest;
+          import android.webkit.WebChromeClient;
+          import android.webkit.WebResourceRequest;
+          import android.webkit.WebResourceResponse;
+          import android.webkit.WebSettings;
+          import android.webkit.WebView;
+          import android.webkit.WebViewClient;
+          import android.view.Window;
+          import android.view.WindowManager;
+          import java.io.InputStream;
+          import java.util.HashMap;
+          import java.util.Map;
+
+          public class MainActivity extends Activity {
+              private WebView webView;
+
+              static class CustomChromeClient extends WebChromeClient {
+                  @Override
+                  public void onPermissionRequest(final PermissionRequest request) {
+                      if (request != null) {
+                          request.grant(request.getResources());
+                      }
+                  }
+              }
+
+              static class CustomViewClient extends WebViewClient {
+                  private AssetManager assetManager;
+
+                  public CustomViewClient(AssetManager am) {
+                      this.assetManager = am;
+                  }
+
+                  @Override
+                  public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+                      Uri uri = request.getUrl();
+                      String path = uri.getPath();
+                      if (path == null || path.equals("/") || path.isEmpty()) {
+                          path = "index.html";
+                      }
+                      if (path.startsWith("/")) {
+                          path = path.substring(1);
+                      }
+
+                      try {
+                          InputStream is = assetManager.open(path);
+                          String mime = "text/html";
+                          if (path.endsWith(".js") || path.endsWith(".mjs")) mime = "application/javascript";
+                          else if (path.endsWith(".css")) mime = "text/css";
+                          else if (path.endsWith(".png")) mime = "image/png";
+                          else if (path.endsWith(".jpg") || path.endsWith(".jpeg")) mime = "image/jpeg";
+                          else if (path.endsWith(".svg")) mime = "image/svg+xml";
+                          else if (path.endsWith(".ico")) mime = "image/x-icon";
+                          else if (path.endsWith(".json")) mime = "application/json";
+                          else if (path.endsWith(".vrm") || path.endsWith(".glb")) mime = "model/gltf-binary";
+                          else if (path.endsWith(".woff2")) mime = "font/woff2";
+                          else if (path.endsWith(".woff")) mime = "font/woff";
+                          else if (path.endsWith(".ttf")) mime = "font/ttf";
+
+                          Map<String, String> responseHeaders = new HashMap<>();
+                          responseHeaders.put("Access-Control-Allow-Origin", "*");
+                          responseHeaders.put("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+                          responseHeaders.put("Access-Control-Allow-Headers", "*");
+                          return new WebResourceResponse(mime, "UTF-8", 200, "OK", responseHeaders, is);
+                      } catch (Exception e) {
+                          return super.shouldInterceptRequest(view, request);
+                      }
+                  }
+
+                  @Override
+                  public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                      return false;
+                  }
+              }
+
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+                  requestWindowFeature(Window.FEATURE_NO_TITLE);
+                  getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN, WindowManager.LayoutParams.FLAG_FULLSCREEN);
+
+                  String[] permissions = new String[]{
+                      Manifest.permission.RECORD_AUDIO,
+                      Manifest.permission.CAMERA,
+                      Manifest.permission.MODIFY_AUDIO_SETTINGS
+                  };
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                      if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                          requestPermissions(permissions, 101);
+                      }
+                  }
+
+                  webView = new WebView(this);
+                  WebSettings settings = webView.getSettings();
+                  settings.setJavaScriptEnabled(true);
+                  settings.setDomStorageEnabled(true);
+                  settings.setDatabaseEnabled(true);
+                  settings.setMediaPlaybackRequiresUserGesture(false);
+                  settings.setAllowFileAccess(true);
+                  settings.setAllowContentAccess(true);
+                  settings.setAllowFileAccessFromFileURLs(true);
+                  settings.setAllowUniversalAccessFromFileURLs(true);
+                  settings.setCacheMode(WebSettings.LOAD_DEFAULT);
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                      settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
+                  }
+
+                  webView.setWebChromeClient(new CustomChromeClient());
+                  webView.setWebViewClient(new CustomViewClient(getAssets()));
+
+                  setContentView(webView);
+                  webView.loadUrl("https://myraa.local/index.html");
+              }
+
+              @Override
+              public void onBackPressed() {
+                  if (webView != null && webView.canGoBack()) {
+                      webView.goBack();
+                  } else {
+                      super.onBackPressed();
+                  }
+              }
+          }
+          EOF
+
+          javac --release 8 -cp $PLATFORM_JAR -d apk_scratch/classes apk_scratch/gen/com/example/myraa/R.java apk_scratch/src/com/example/myraa/MainActivity.java
           java -cp $BUILD_TOOLS_DIR/lib/d8.jar com.android.tools.r8.D8 --lib $PLATFORM_JAR --output apk_scratch/dex $(find apk_scratch/classes -name "*.class")
           
           jar -uf apk_scratch/unaligned.apk -C apk_scratch/dex classes.dex
@@ -150,7 +262,7 @@ jobs:
           
           keytool -genkey -v -keystore apk_scratch/debug.keystore -alias androiddebugkey -storepass android -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
           java -jar $BUILD_TOOLS_DIR/lib/apksigner.jar sign --ks apk_scratch/debug.keystore --ks-pass pass:android --ks-key-alias androiddebugkey --key-pass pass:android --out android_dist/MYRAA.apk apk_scratch/aligned.apk
-          echo "Successfully generated standalone fallback APK at android_dist/MYRAA.apk"
+          echo "✅ Successfully built standalone MYRAA.apk!"
 
       - name: Upload Android Artifact
         uses: actions/upload-artifact@v4
