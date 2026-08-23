@@ -13,7 +13,14 @@
     "start": "node dist/server.cjs",
     "start:unix": "node local-agent.js & node dist/server.cjs",
     "setup:unix": "npm install",
-    "build": "vite build"
+    "build": "vite build",
+    "compile:launcher": "powershell -ExecutionPolicy Bypass -File scripts/compile-launcher.ps1",
+    "sync:android": "node scripts/sync-android-assets.js",
+    "package:win": "npm run build && electron-builder --win --x64",
+    "package:portable": "npm run build && electron-builder --win --x64 -p never --config.win.target=portable",
+    "package:nsis": "npm run build && electron-builder --win --x64 -p never --config.win.target=nsis",
+    "package:zip": "powershell -ExecutionPolicy Bypass -File scripts/package-universal-zip.ps1",
+    "package:all": "npm run compile:launcher && npm run build && electron-builder --win --x64 && npm run package:zip"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
@@ -41,8 +48,9 @@
     "productName": "MYRAA",
     "electronVersion": "33.2.1",
     "copyright": "Copyright (c) 2026 Aarav",
+    "afterPack": "electron/afterPack.cjs",
     "directories": {
-      "output": "F:/release/build-output",
+      "output": "release_dist",
       "buildResources": "build"
     },
     "win": {

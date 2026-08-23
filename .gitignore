@@ -19,5 +19,15 @@ yarn-error.log*
 
 # Build artifacts
 dist/server.cjs.map
+release_dist/
+build-output/
+release/
+*.blockmap.gz
 .DS_Store
 Thumbs.db
+
+# Android
+android/local.properties
+android/.gradle/
+android/app/build/
+android/build/

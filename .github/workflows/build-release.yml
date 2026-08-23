@@ -2,12 +2,17 @@ name: Build and Release MYRAA
 
 on:
   push:
-    tags:
-      - 'v*'
     branches:
       - main
-      - release
+      - master
+    tags:
+      - 'v*'
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release tag (e.g. v1.0.0)'
+        required: false
+        default: 'v1.0.0'
 
 permissions:
   contents: write
@@ -20,7 +25,7 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Set up Node.js
+      - name: Setup Node.js 20
         uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -29,74 +34,172 @@ jobs:
       - name: Install Dependencies
         run: npm ci || npm install
 
-      - name: Build Web Application
-        run: npm run build || true
+      - name: Compile Native C# Engines
+        shell: pwsh
+        run: |
+          $csc = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
+          if (-not (Test-Path $csc)) {
+            $cmd = Get-Command csc -ErrorAction SilentlyContinue
+            if ($cmd) { $csc = $cmd.Source }
+          }
+          Write-Host "Compiling native tools with $csc..."
+          if (-not (Test-Path "build")) { New-Item -ItemType Directory -Path "build" -Force }
+          
+          # Compile C# Launcher
+          if (Test-Path "electron/launcher.cs") {
+            & $csc /target:winexe /out:build/MYRAA-launcher.exe /win32icon:build/icon.ico electron/launcher.cs
+          }
+          
+          # Compile C# Native Clicker
+          $clickerSrc = @("electron/clicker.cs", "resources/agent/clicker.cs", "clicker.cs") | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if ($clickerSrc) {
+            & $csc /target:exe /out:build/clicker.exe /optimize+ /platform:anycpu /r:System.Drawing.dll,System.Windows.Forms.dll,System.Management.dll $clickerSrc
+          }
 
-      - name: Package Windows Executables with electron-builder
-        run: npx electron-builder --win --x64 -c.forceCodeSigning=false
-        continue-on-error: true
+      - name: Build Web Application Frontend
+        run: npm run build
+
+      - name: Package with Electron Builder (NSIS & Portable)
+        run: |
+          npx electron-builder --win --x64 --config.directories.output=release_dist
+
+      - name: Package Universal Standalone ZIP
+        shell: pwsh
+        run: |
+          if (Test-Path "release_dist\win-unpacked") {
+            Write-Host "Creating Universal Standalone Portable ZIP from win-unpacked..."
+            Compress-Archive -Path release_dist\win-unpacked\* -DestinationPath release_dist\MYRAA-v1.0.0-Windows-Universal-Portable.zip -CompressionLevel Optimal -Force
+          } else {
+            Write-Warning "win-unpacked directory not found in release_dist"
+          }
+
+      - name: Generate Windows SHA256 Checksums
+        shell: pwsh
+        run: |
+          Get-FileHash release_dist\MYRAA-* -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  $($_.Path | Split-Path -Leaf)" } | Out-File -FilePath release_dist\SHA256SUMS-windows.txt -Encoding ascii
+          Get-Content release_dist\SHA256SUMS-windows.txt
 
       - name: Upload Windows Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: windows-binaries
+          name: windows-artifacts
           path: |
-            dist/*.exe
-            dist/*.zip
-            release/*.exe
-            release/*.zip
+            release_dist/MYRAA-Setup-*.exe
+            release_dist/MYRAA-Portable-*.exe
+            release_dist/MYRAA-*-Windows-Universal-Portable.zip
+            release_dist/SHA256SUMS-windows.txt
+          if-no-files-found: warn
 
   build-android:
-    name: Build Android APK
+    name: Build Android Companion APK
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Set up JDK 17
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Dependencies & Build Frontend
+        run: |
+          npm ci || npm install
+          npm run build
+
+      - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
-          java-version: '17'
           distribution: 'temurin'
+          java-version: '17'
 
-      - name: Set up Android SDK
+      - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Build Android APK
+      - name: Sync Web Assets to Android
         run: |
-          if [ -f "./android/gradlew" ]; then
-            cd android && chmod +x gradlew && ./gradlew assembleRelease || ./gradlew assembleDebug
-          elif [ -f "./gradlew" ]; then
-            chmod +x gradlew && ./gradlew assembleRelease || ./gradlew assembleDebug
-          else
-            echo "Building web assets for mobile container..."
+          mkdir -p android/app/src/main/assets
+          cp -r dist/* android/app/src/main/assets/ || true
+          if [ -f icon.png ]; then cp icon.png android/app/src/main/assets/icon.png; fi
+          if [ -f icon.ico ]; then cp icon.ico android/app/src/main/assets/favicon.ico; fi
+
+      - name: Build Android APK with Gradle
+        run: |
+          if [ -d "android" ]; then
+            cd android
+            chmod +x gradlew || true
+            ./gradlew assembleRelease --no-daemon || ./gradlew assembleDebug --no-daemon
           fi
 
-      - name: Upload Android APK
+      - name: Locate & Prepare Android APK
+        run: |
+          mkdir -p android_dist
+          APK_FILE=$(find android/app/build/outputs/apk -type f -name "*.apk" 2>/dev/null | head -n 1)
+          if [ -n "$APK_FILE" ]; then
+            cp "$APK_FILE" android_dist/MYRAA.apk
+            echo "Copied APK from $APK_FILE to android_dist/MYRAA.apk"
+          fi
+
+      - name: Upload Android Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: android-apk
-          path: |
-            **/*.apk
+          name: android-artifact
+          path: android_dist/MYRAA.apk
+          if-no-files-found: warn
 
-  release:
-    name: Create GitHub Release
+  publish-release:
+    name: Publish GitHub Release
     needs: [build-windows, build-android]
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
-      - name: Download all artifacts
+      - name: Download Windows Artifacts
         uses: actions/download-artifact@v4
+        with:
+          name: windows-artifacts
+          path: release_files
 
-      - name: Create Release and Upload Assets
+      - name: Download Android Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: android-artifact
+          path: release_files
+
+      - name: Generate Consolidated Checksums
+        run: |
+          cd release_files
+          sha256sum MYRAA-* MYRAA.apk 2>/dev/null > SHA256SUMS.txt || sha256sum * 2>/dev/null > SHA256SUMS.txt || true
+          cp SHA256SUMS.txt checksums.sha256 2>/dev/null || true
+          echo "Generated SHA256 Checksums:"
+          cat SHA256SUMS.txt || true
+
+      - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          name: MYRAA Release ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name || inputs.release_tag || 'v1.0.0' }}
+          name: "MYRAA ${{ github.ref_name || inputs.release_tag || 'v1.0.0' }} — Universal Windows & Android Companion"
           draft: false
           prerelease: false
-          generate_release_notes: true
           files: |
-            windows-binaries/*
-            android-apk/*
+            release_files/MYRAA-Setup-*.exe
+            release_files/MYRAA-Portable-*.exe
+            release_files/MYRAA-*-Windows-Universal-Portable.zip
+            release_files/MYRAA.apk
+            release_files/SHA256SUMS.txt
+            release_files/checksums.sha256
+          body: |
+            # 🌸 MYRAA Release Distribution
+            Private 3D AI Desktop Companion & Autonomous Voice Assistant created by Aarav.
+
+            ### Included Distribution Packages:
+            - **`MYRAA-Setup-1.0.0.exe`**: Windows graphical setup installer with Desktop & Start Menu shortcuts.
+            - **`MYRAA-Portable-1.0.0.exe`**: Single-file standalone self-extracting portable Windows executable.
+            - **`MYRAA-v1.0.0-Windows-Universal-Portable.zip`**: Complete universal standalone portable folder distribution. Extract anywhere and launch `MYRAA.exe` or `START_SERVER.bat`.
+            - **`MYRAA.apk`**: Standalone Android companion app with hardware-accelerated 3D avatar and voice interaction.
+            - **`SHA256SUMS.txt` / `checksums.sha256`**: Cryptographic SHA256 verification checksums for all release binaries.
+
+            ---
+            *Built automatically via GitHub Actions CI/CD Pipeline.*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

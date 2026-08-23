@@ -45,6 +45,11 @@ async function ensureBrowser() {
   return { browser, context, page };
 }
 
+// Health check endpoint
+app.get('/api/health', (req, res) => {
+  res.json({ ok: true, status: 'online' });
+});
+
 // Status check endpoint for Myraa Web HUD
 app.get('/api/status', (req, res) => {
   res.json({
