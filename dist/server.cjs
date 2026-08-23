@@ -1994,8 +1994,8 @@ ${interceptorScript}`);
             session.sendRealtimeInput({
               video: { data: msg.video, mimeType: "image/jpeg" }
             });
-          } else if (msg.type === "text" && typeof msg.text === "string") {
-            const text = msg.text.trim();
+          } else if ((msg.type === "text" || msg.type === "text_input" || msg.type === "message") && (typeof msg.text === "string" || typeof msg.message === "string")) {
+            const text = (msg.text || msg.message || "").trim();
             if (text) {
               clientWs.send(JSON.stringify({ type: "transcription", role: "user", text }));
               dialogueHistory.push({ role: "user", text });
