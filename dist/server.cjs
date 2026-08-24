@@ -2463,21 +2463,33 @@ ${interceptorScript}`);
       clientWs.close();
     }
   });
-  app.use("/assets", import_express.default.static(import_path2.default.join(process.cwd(), "assets")));
-  if (process.env.NODE_ENV !== "production") {
-    const { createServer: createViteServer } = await import("vite");
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa"
-    });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = import_path2.default.join(process.cwd(), "dist");
-    app.use(import_express.default.static(distPath));
-    app.get("*", (req, res) => {
-      res.sendFile(import_path2.default.join(distPath, "index.html"));
-    });
+    const candidateDirs = [
+    __dirname,
+    import_path2.default.join(__dirname, "dist"),
+    import_path2.default.join(process.cwd(), "dist"),
+    process.cwd()
+  ];
+  let distPath = candidateDirs.find(d => import_fs.default.existsSync(import_path2.default.join(d, "index.html"))) || __dirname;
+
+  app.use(import_express.default.static(distPath));
+  if (import_fs.default.existsSync(import_path2.default.join(distPath, "assets"))) {
+    app.use("/assets", import_express.default.static(import_path2.default.join(distPath, "assets")));
   }
+  if (import_fs.default.existsSync(import_path2.default.join(process.cwd(), "assets"))) {
+    app.use("/assets", import_express.default.static(import_path2.default.join(process.cwd(), "assets")));
+  }
+
+  app.get("*", (req, res, next) => {
+    if (req.path.startsWith("/api") || req.path.startsWith("/live") || req.path.startsWith("/assets/")) {
+      return next();
+    }
+    const indexPath = import_path2.default.join(distPath, "index.html");
+    if (import_fs.default.existsSync(indexPath)) {
+      res.sendFile(indexPath);
+    } else {
+      next();
+    }
+  });
   server.listen(PORT, "0.0.0.0", () => {
     logStartup(`MYRAA V2 server started on http://localhost:${PORT}`);
     console.log(`[Server] Running on http://localhost:${PORT}`);
