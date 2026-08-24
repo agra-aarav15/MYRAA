@@ -547,10 +547,13 @@ function getClickerExePath() {
     path.resolve(__dirname, "../../agent/clicker.exe"),
     path.resolve(__dirname, "../agent/clicker.exe"),
     path.resolve(__dirname, "agent/clicker.exe"),
+    path.resolve(__dirname, "../build/clicker.exe"),
     path.join(process.resourcesPath || "", "agent", "clicker.exe"),
     path.resolve(process.cwd(), "resources/agent/clicker.exe"),
+    path.resolve(process.cwd(), "resources/app/build/clicker.exe"),
     path.resolve(process.cwd(), "../agent/clicker.exe"),
-    "F:\\release\\win-unpacked\\resources\\agent\\clicker.exe"
+    "F:\\release\\win-unpacked\\resources\\agent\\clicker.exe",
+    "F:\\release\\win-unpacked\\clicker.exe"
   ];
   for (const p of possiblePaths) {
     if (p && fs.existsSync(p)) return p;
@@ -560,12 +563,12 @@ function getClickerExePath() {
 
 function nativeOpenApp(name) {
   if (!name) return { ok: false, error: "Application name is required" };
-  const trimmed = name.trim().toLowerCase();
+  const trimmed = name.trim();
   logCommand("OPEN_APP: " + name);
 
   if (process.platform === "darwin") {
     try {
-      require("child_process").exec("open -a \"" + name + "\" || open \"" + name + "\"");
+      require("child_process").exec('open -a "' + name + '" || open "' + name + '"');
       return { ok: true, result: "Opened " + name + " on macOS." };
     } catch (e) {
       return { ok: false, error: "Could not open " + name + " on macOS: " + e.message };
@@ -574,10 +577,29 @@ function nativeOpenApp(name) {
 
   if (process.platform === "linux") {
     try {
-      require("child_process").exec("xdg-open \"" + trimmed + "\" || " + trimmed + " &");
+      require("child_process").exec('xdg-open "' + trimmed + '" || ' + trimmed + ' &');
       return { ok: true, result: "Launched " + name + " on Linux." };
     } catch (e) {
       return { ok: false, error: "Could not launch " + name + " on Linux: " + e.message };
+    }
+  }
+
+  // Windows platform: prioritize native clicker.exe with Win32 SetForegroundWindow & AttachThreadInput
+  const clickerExe = getClickerExePath();
+  if (clickerExe) {
+    try {
+      const cleanName = trimmed.replace(/"/g, '');
+      const out = require("child_process").execSync(`"${clickerExe}" launch "${cleanName}"`, { encoding: "utf8", timeout: 6000 });
+      if (out && (out.includes('"success":true') || out.includes('status'))) {
+        try {
+          const parsed = JSON.parse(out.trim());
+          return { ok: true, result: (parsed.title || name) + " opened in the foreground.", ...parsed };
+        } catch {
+          return { ok: true, result: name + " opened in the foreground." };
+        }
+      }
+    } catch (err) {
+      console.warn("clicker launch warn:", err.message);
     }
   }
 
@@ -613,7 +635,8 @@ function nativeOpenApp(name) {
     "snipping tool": { exe: "start ms-screenclip:", title: "Snipping Tool" }
   };
 
-  const appInfo = known[trimmed];
+  const lowerName = trimmed.toLowerCase();
+  const appInfo = known[lowerName];
   const targetExe = appInfo ? appInfo.exe : trimmed;
   const targetTitle = appInfo ? appInfo.title : name;
 
@@ -633,7 +656,7 @@ function nativeOpenApp(name) {
         }
       }
     }
-    Start-Sleep -Milliseconds 450;
+    Start-Sleep -Milliseconds 350;
     $wshell = New-Object -ComObject WScript.Shell;
     if ($p -and $p.Id) { $wshell.AppActivate($p.Id); }
     else { $wshell.AppActivate($title); }
@@ -658,7 +681,8 @@ function nativeMouseClick(args = {}) {
   let button = (args.button || "left").toLowerCase();
   let clicks = Number(args.clicks) || 1;
   if (args.double || button === "double") {
-    button = "double";
+    button = "left";
+    clicks = 2;
   }
   logCommand("MOUSE_CLICK: (" + x + ", " + y + ") " + button + " " + clicks + "x");
 
@@ -669,9 +693,13 @@ function nativeMouseClick(args = {}) {
   const exePath = getClickerExePath();
   if (exePath) {
     try {
-      const out = require("child_process").execSync(`"${exePath}" ${isNaN(x) ? -1 : x} ${isNaN(y) ? -1 : y} ${button} ${clicks}`, { encoding: "utf8", timeout: 3000 });
-      return { ok: true, result: "Clicked " + button + " mouse button " + (clicks > 1 ? clicks + " times " : "") + (!isNaN(x) && x >= 0 ? "at (" + x + ", " + y + ")" : "at cursor position") + "." };
-    } catch (err) {}
+      const targetX = isNaN(x) ? -1 : Math.round(x);
+      const targetY = isNaN(y) ? -1 : Math.round(y);
+      const out = require("child_process").execSync(`"${exePath}" click ${targetX} ${targetY} ${button} ${clicks}`, { encoding: "utf8", timeout: 3000 });
+      return { ok: true, result: "Clicked " + button + " mouse button " + (clicks > 1 ? clicks + " times " : "") + (targetX >= 0 ? "at (" + targetX + ", " + targetY + ")" : "at cursor position") + "." };
+    } catch (err) {
+      console.warn("clicker click warn:", err.message);
+    }
   }
 
   try {
@@ -680,11 +708,11 @@ function nativeMouseClick(args = {}) {
     const up = isRight ? "0x0010" : "0x0004";
     let ps = `
       if (-not ([System.Management.Automation.PSTypeName]"Win32.NativeInput").Type) {
-        Add-Type -MemberDefinition "[DllImport(\"user32.dll\")] public static extern void mouse_event(uint f, uint x, uint y, uint d, int e); [DllImport(\"user32.dll\")] public static extern bool SetCursorPos(int x, int y);" -Name NativeInput -Namespace Win32;
+        Add-Type -MemberDefinition "[DllImport(\\"user32.dll\\")] public static extern void mouse_event(uint f, uint x, uint y, uint d, int e); [DllImport(\\"user32.dll\\")] public static extern bool SetCursorPos(int x, int y);" -Name NativeInput -Namespace Win32;
       }
     `;
     if (!isNaN(x) && x >= 0 && !isNaN(y) && y >= 0) {
-      ps += ` [Win32.NativeInput]::SetCursorPos(${x}, ${y}); `;
+      ps += ` [Win32.NativeInput]::SetCursorPos(${Math.round(x)}, ${Math.round(y)}); `;
     }
     for (let i = 0; i < clicks; i++) {
       ps += ` [Win32.NativeInput]::mouse_event(${down}, 0, 0, 0, 0); [Win32.NativeInput]::mouse_event(${up}, 0, 0, 0, 0); `;
