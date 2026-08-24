@@ -31,15 +31,15 @@ jobs:
           node-version: 20
 
       - name: Install Dependencies
-        run: npm install --no-audit --include=dev
+        run: npm install --no-audit
 
       - name: Package with Electron Builder (NSIS & Portable)
         shell: pwsh
         run: |
-          if (Test-Path "build") { } else { New-Item -ItemType Directory -Path "build" -Force }
+          if (-not (Test-Path "build")) { New-Item -ItemType Directory -Path "build" -Force }
           if (Test-Path "icon.ico") { Copy-Item "icon.ico" -Destination "build/icon.ico" -Force }
           if (Test-Path "icon.png") { Copy-Item "icon.png" -Destination "build/icon.png" -Force }
-          npx --yes electron-builder --win --x64 --config.directories.output=release_dist
+          npx --yes electron-builder --win --x64 -p never --config.directories.output=release_dist
 
       - name: Package Universal Standalone ZIP
         shell: pwsh
@@ -118,143 +118,7 @@ jobs:
           $BUILD_TOOLS_DIR/aapt2 compile --dir android/app/src/main/res -o apk_scratch/compiled_res/res.zip
           $BUILD_TOOLS_DIR/aapt2 link -I $PLATFORM_JAR --manifest android/app/src/main/AndroidManifest.xml -A android/app/src/main/assets -o apk_scratch/unaligned.apk --java apk_scratch/gen apk_scratch/compiled_res/res.zip --auto-add-overlay
           
-          # Create Java MainActivity with asset interception
-          mkdir -p apk_scratch/src/com/example/myraa
-          cat << 'EOF' > apk_scratch/src/com/example/myraa/MainActivity.java
-          package com.example.myraa;
-
-          import android.Manifest;
-          import android.app.Activity;
-          import android.content.pm.PackageManager;
-          import android.content.res.AssetManager;
-          import android.net.Uri;
-          import android.os.Build;
-          import android.os.Bundle;
-          import android.webkit.PermissionRequest;
-          import android.webkit.WebChromeClient;
-          import android.webkit.WebResourceRequest;
-          import android.webkit.WebResourceResponse;
-          import android.webkit.WebSettings;
-          import android.webkit.WebView;
-          import android.webkit.WebViewClient;
-          import android.view.Window;
-          import android.view.WindowManager;
-          import java.io.InputStream;
-          import java.util.HashMap;
-          import java.util.Map;
-
-          public class MainActivity extends Activity {
-              private WebView webView;
-
-              static class CustomChromeClient extends WebChromeClient {
-                  @Override
-                  public void onPermissionRequest(final PermissionRequest request) {
-                      if (request != null) {
-                          request.grant(request.getResources());
-                      }
-                  }
-              }
-
-              static class CustomViewClient extends WebViewClient {
-                  private AssetManager assetManager;
-
-                  public CustomViewClient(AssetManager am) {
-                      this.assetManager = am;
-                  }
-
-                  @Override
-                  public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
-                      Uri uri = request.getUrl();
-                      String path = uri.getPath();
-                      if (path == null || path.equals("/") || path.isEmpty()) {
-                          path = "index.html";
-                      }
-                      if (path.startsWith("/")) {
-                          path = path.substring(1);
-                      }
-
-                      try {
-                          InputStream is = assetManager.open(path);
-                          String mime = "text/html";
-                          if (path.endsWith(".js") || path.endsWith(".mjs")) mime = "application/javascript";
-                          else if (path.endsWith(".css")) mime = "text/css";
-                          else if (path.endsWith(".png")) mime = "image/png";
-                          else if (path.endsWith(".jpg") || path.endsWith(".jpeg")) mime = "image/jpeg";
-                          else if (path.endsWith(".svg")) mime = "image/svg+xml";
-                          else if (path.endsWith(".ico")) mime = "image/x-icon";
-                          else if (path.endsWith(".json")) mime = "application/json";
-                          else if (path.endsWith(".vrm") || path.endsWith(".glb")) mime = "model/gltf-binary";
-                          else if (path.endsWith(".woff2")) mime = "font/woff2";
-                          else if (path.endsWith(".woff")) mime = "font/woff";
-                          else if (path.endsWith(".ttf")) mime = "font/ttf";
-
-                          Map<String, String> responseHeaders = new HashMap<>();
-                          responseHeaders.put("Access-Control-Allow-Origin", "*");
-                          responseHeaders.put("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-                          responseHeaders.put("Access-Control-Allow-Headers", "*");
-                          return new WebResourceResponse(mime, "UTF-8", 200, "OK", responseHeaders, is);
-                      } catch (Exception e) {
-                          return super.shouldInterceptRequest(view, request);
-                      }
-                  }
-
-                  @Override
-                  public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-                      return false;
-                  }
-              }
-
-              @Override
-              protected void onCreate(Bundle savedInstanceState) {
-                  super.onCreate(savedInstanceState);
-                  requestWindowFeature(Window.FEATURE_NO_TITLE);
-                  getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN, WindowManager.LayoutParams.FLAG_FULLSCREEN);
-
-                  String[] permissions = new String[]{
-                      Manifest.permission.RECORD_AUDIO,
-                      Manifest.permission.CAMERA,
-                      Manifest.permission.MODIFY_AUDIO_SETTINGS
-                  };
-                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                      if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-                          requestPermissions(permissions, 101);
-                      }
-                  }
-
-                  webView = new WebView(this);
-                  WebSettings settings = webView.getSettings();
-                  settings.setJavaScriptEnabled(true);
-                  settings.setDomStorageEnabled(true);
-                  settings.setDatabaseEnabled(true);
-                  settings.setMediaPlaybackRequiresUserGesture(false);
-                  settings.setAllowFileAccess(true);
-                  settings.setAllowContentAccess(true);
-                  settings.setAllowFileAccessFromFileURLs(true);
-                  settings.setAllowUniversalAccessFromFileURLs(true);
-                  settings.setCacheMode(WebSettings.LOAD_DEFAULT);
-                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                      settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
-                  }
-
-                  webView.setWebChromeClient(new CustomChromeClient());
-                  webView.setWebViewClient(new CustomViewClient(getAssets()));
-
-                  setContentView(webView);
-                  webView.loadUrl("https://myraa.local/index.html");
-              }
-
-              @Override
-              public void onBackPressed() {
-                  if (webView != null && webView.canGoBack()) {
-                      webView.goBack();
-                  } else {
-                      super.onBackPressed();
-                  }
-              }
-          }
-          EOF
-
-          javac --release 8 -cp $PLATFORM_JAR -d apk_scratch/classes apk_scratch/gen/com/example/myraa/R.java apk_scratch/src/com/example/myraa/MainActivity.java
+          javac --release 8 -cp $PLATFORM_JAR -d apk_scratch/classes apk_scratch/gen/com/example/myraa/R.java android/app/src/main/java/com/example/myraa/MainActivity.java
           java -cp $BUILD_TOOLS_DIR/lib/d8.jar com.android.tools.r8.D8 --lib $PLATFORM_JAR --output apk_scratch/dex $(find apk_scratch/classes -name "*.class")
           
           jar -uf apk_scratch/unaligned.apk -C apk_scratch/dex classes.dex
@@ -274,6 +138,7 @@ jobs:
   publish-release:
     name: Publish GitHub Release
     needs: [build-windows, build-android]
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - name: Download Windows Artifacts
@@ -318,7 +183,7 @@ jobs:
             - **`MYRAA-Setup-1.0.0.exe`**: Full Windows NSIS installer with desktop shortcut & uninstaller.
             - **`MYRAA-Portable-1.0.0.exe`**: Single-file standalone zero-install executable.
             - **`MYRAA-v1.0.0-Windows-Universal-Portable.zip`**: Universal portable distribution folder archive.
-            - **`MYRAA.apk`**: Standalone Android mobile companion application with local asset interception & voice interaction.
+            - **`MYRAA.apk`**: Standalone Android mobile companion application with internal server engine & full phone controls.
             - **`SHA256SUMS.txt`**: Cryptographic SHA256 verification checksums for all release binaries.
 
             ---
