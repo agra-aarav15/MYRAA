@@ -41,6 +41,9 @@ var import_fs = __toESM(require("fs"), 1);
 var import_path = __toESM(require("path"), 1);
 const appDataDir = process.env.APPDATA || (process.platform === 'darwin' ? path.join(process.env.HOME || '', 'Library', 'Application Support') : path.join(process.env.HOME || '', '.config'));
 
+
+
+var DATA_DIR = process.env.MYRAA_DATA_DIR || path.join(appDataDir, 'myraa');
 const AUTH_TOKEN_FILE = path.join(DATA_DIR, "token.txt");
 function getAuthToken() {
   try {
@@ -55,7 +58,6 @@ function getAuthToken() {
 }
 const MYRAA_AUTH_TOKEN = getAuthToken();
 
-var DATA_DIR = process.env.MYRAA_DATA_DIR || path.join(appDataDir, 'myraa');
 try {
   fs.mkdirSync(DATA_DIR, { recursive: true });
   fs.mkdirSync(path.join(DATA_DIR, 'logs'), { recursive: true });
@@ -1785,6 +1787,29 @@ async function startServer() {
       res.status(500).json({ error: e?.message || "Failed to save API key." });
     }
   });
+  
+  app.post("/api/execute", async (req, res) => {
+    try {
+      const { tool, args } = req.body;
+      if (!tool) return res.status(400).json({ ok: false, error: "Tool name is required." });
+      const result = await callDesktopAgent(tool, args || {});
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  app.post("/api/command", async (req, res) => {
+    try {
+      const { command } = req.body;
+      if (!command) return res.status(400).json({ ok: false, error: "Command is required." });
+      const result = nativeRunTerminal(command);
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
   app.get("/api/agent-health", async (_req, res) => {
     try {
       const ctrl = new AbortController();
