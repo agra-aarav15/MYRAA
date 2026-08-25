@@ -2,12 +2,14 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
+using System.Drawing.Imaging;
 using System.IO;
 using System.Management;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Windows.Forms;
+using Microsoft.Win32;
 
 namespace MyraaNativeClicker {
     class Program {
@@ -187,6 +189,25 @@ namespace MyraaNativeClicker {
         public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 
         private static readonly IntPtr DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = new IntPtr(-4);
+
+        [DllImport("user32.dll")]
+        public static extern IntPtr GetDesktopWindow();
+        [DllImport("user32.dll")]
+        public static extern IntPtr GetWindowDC(IntPtr hWnd);
+        [DllImport("user32.dll")]
+        public static extern IntPtr ReleaseDC(IntPtr hWnd, IntPtr hDC);
+        [DllImport("gdi32.dll")]
+        public static extern bool BitBlt(IntPtr hObject, int nXDest, int nYDest, int nWidth, int nHeight, IntPtr hObjectSource, int nXSrc, int nYSrc, int dwRop);
+        [DllImport("gdi32.dll")]
+        public static extern IntPtr CreateCompatibleBitmap(IntPtr hDC, int nWidth, int nHeight);
+        [DllImport("gdi32.dll")]
+        public static extern IntPtr CreateCompatibleDC(IntPtr hDC);
+        [DllImport("gdi32.dll")]
+        public static extern bool DeleteDC(IntPtr hDC);
+        [DllImport("gdi32.dll")]
+        public static extern bool DeleteObject(IntPtr hObject);
+        [DllImport("gdi32.dll")]
+        public static extern IntPtr SelectObject(IntPtr hDC, IntPtr hObject);
 
         #endregion
 
@@ -612,24 +633,6 @@ namespace MyraaNativeClicker {
                         }
                     } catch {}
                 }
-
-                if (windows.Count == 0) {
-                    foreach (Process p in procs) {
-                        try {
-                            if (p.Id > 4 && !string.IsNullOrWhiteSpace(p.ProcessName) && p.ProcessName != "System" && p.ProcessName != "Idle") {
-                                windows.Add(new WindowInfo {
-                                    Handle = p.MainWindowHandle != IntPtr.Zero ? p.MainWindowHandle : (IntPtr)p.Id,
-                                    Title = !string.IsNullOrWhiteSpace(p.MainWindowTitle) ? p.MainWindowTitle : p.ProcessName,
-                                    ProcessName = p.ProcessName,
-                                    ProcessId = (uint)p.Id,
-                                    IsMinimized = false,
-                                    IsMaximized = false,
-                                    Rect = new RECT { Left = 0, Top = 0, Right = 1920, Bottom = 1080 }
-                                });
-                            }
-                        } catch {}
-                    }
-                }
             } catch {}
 
             return windows;
@@ -747,7 +750,7 @@ namespace MyraaNativeClicker {
 
             string target = ResolveAppTarget(appName);
 
-            // First check if an existing window for this application is already open
+            // Check if an existing window for this application is already open
             WindowInfo existing = FindWindowByQuery(appName);
             if (existing == null && target.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) {
                 existing = FindWindowByQuery(Path.GetFileNameWithoutExtension(target));
@@ -768,9 +771,9 @@ namespace MyraaNativeClicker {
 
                 Process p = Process.Start(psi);
 
-                // Wait briefly for main window handle and bring to foreground
-                for (int i = 0; i < 4; i++) {
-                    Thread.Sleep(40);
+                // Robust polling up to 5000 ms (50 iterations x 100ms) for slow loading apps (VS Code, Chrome, etc.)
+                for (int i = 0; i < 50; i++) {
+                    Thread.Sleep(100);
                     WindowInfo newWin = FindWindowByQuery(appName);
                     if (newWin == null && target.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) {
                         newWin = FindWindowByQuery(Path.GetFileNameWithoutExtension(target));
@@ -895,6 +898,89 @@ namespace MyraaNativeClicker {
 
         #endregion
 
+        #region Screen Capture (DPI-Aware Screenshots via Win32 Desktop BitBlt)
+
+        public static string CaptureScreen(string outputPath = null) {
+            int w = GetSystemMetrics(SM_CXSCREEN);
+            int h = GetSystemMetrics(SM_CYSCREEN);
+            if (w <= 0) w = 1920;
+            if (h <= 0) h = 1080;
+
+            IntPtr hDesktop = GetDesktopWindow();
+            IntPtr hDeskDC = GetWindowDC(hDesktop);
+            IntPtr hMemDC = CreateCompatibleDC(hDeskDC);
+            IntPtr hBmp = CreateCompatibleBitmap(hDeskDC, w, h);
+            IntPtr hOld = SelectObject(hMemDC, hBmp);
+
+            BitBlt(hMemDC, 0, 0, w, h, hDeskDC, 0, 0, 0x00CC0020 /* SRCCOPY */);
+            SelectObject(hMemDC, hOld);
+
+            string result = "";
+            using (Bitmap bmp = Image.FromHbitmap(hBmp)) {
+                if (!string.IsNullOrEmpty(outputPath) && outputPath != "--base64" && outputPath != "-b64") {
+                    string dir = Path.GetDirectoryName(outputPath);
+                    if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir)) {
+                        Directory.CreateDirectory(dir);
+                    }
+                    bmp.Save(outputPath, ImageFormat.Png);
+                    result = outputPath;
+                } else {
+                    using (MemoryStream ms = new MemoryStream()) {
+                        bmp.Save(ms, ImageFormat.Png);
+                        byte[] bytes = ms.ToArray();
+                        result = Convert.ToBase64String(bytes);
+                    }
+                }
+            }
+
+            DeleteObject(hBmp);
+            DeleteDC(hMemDC);
+            ReleaseDC(hDesktop, hDeskDC);
+            return result;
+        }
+
+        #endregion
+
+        #region Windows Auto-Start Helper (Registry)
+
+        public static bool SetAutoStart(bool enable, string exePath = null) {
+            const string runKey = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+            const string appName = "MYRAA";
+            try {
+                using (RegistryKey key = Registry.CurrentUser.OpenSubKey(runKey, true)) {
+                    if (key == null) return false;
+                    if (enable) {
+                        string targetExe = exePath;
+                        if (string.IsNullOrEmpty(targetExe)) {
+                            targetExe = Process.GetCurrentProcess().MainModule.FileName;
+                        }
+                        key.SetValue(appName, "\"" + targetExe + "\"");
+                    } else {
+                        key.DeleteValue(appName, false);
+                    }
+                    return true;
+                }
+            } catch {
+                return false;
+            }
+        }
+
+        public static bool GetAutoStartStatus() {
+            const string runKey = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+            const string appName = "MYRAA";
+            try {
+                using (RegistryKey key = Registry.CurrentUser.OpenSubKey(runKey, false)) {
+                    if (key == null) return false;
+                    object val = key.GetValue(appName);
+                    return val != null;
+                }
+            } catch {
+                return false;
+            }
+        }
+
+        #endregion
+
         #region Helper Utilities
 
         private static string EscapeJson(string str) {
@@ -910,7 +996,7 @@ namespace MyraaNativeClicker {
                 InitializeDpi();
 
                 if (args.Length == 0) {
-                    Console.WriteLine("{\"status\":\"ok\",\"engine\":\"MyraaNativeClicker 3.0\"}");
+                    Console.WriteLine("{\"status\":\"ok\",\"engine\":\"MyraaNativeClicker 3.1\"}");
                     return;
                 }
 
@@ -935,6 +1021,40 @@ namespace MyraaNativeClicker {
 
                 // Subcommand dispatch
                 switch (first) {
+                    case "screen": case "resolution": {
+                        int w = GetSystemMetrics(SM_CXSCREEN);
+                        int h = GetSystemMetrics(SM_CYSCREEN);
+                        int vw = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+                        int vh = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+                        Console.WriteLine("{\"success\":true,\"width\":" + (w > 0 ? w : 1920) + ",\"height\":" + (h > 0 ? h : 1080) + ",\"vWidth\":" + (vw > 0 ? vw : w) + ",\"vHeight\":" + (vh > 0 ? vh : h) + "}");
+                        break;
+                    }
+                    case "screenshot": {
+                        string targetPath = args.Length > 1 ? args[1] : null;
+                        if (string.IsNullOrEmpty(targetPath) || targetPath == "--base64" || targetPath == "-b64") {
+                            string b64 = CaptureScreen(null);
+                            Console.WriteLine("{\"success\":true,\"action\":\"screenshot\",\"format\":\"base64\",\"bytes\":" + b64.Length + ",\"data\":\"" + b64 + "\"}");
+                        } else {
+                            string saved = CaptureScreen(targetPath);
+                            Console.WriteLine("{\"success\":true,\"action\":\"screenshot\",\"format\":\"png\",\"path\":\"" + EscapeJson(saved) + "\"}");
+                        }
+                        break;
+                    }
+                    case "autostart": {
+                        string sub = args.Length > 1 ? args[1].ToLower().Trim() : "status";
+                        if (sub == "enable" || sub == "on" || sub == "true") {
+                            string exe = args.Length > 2 ? args[2] : null;
+                            bool ok = SetAutoStart(true, exe);
+                            Console.WriteLine("{\"success\":" + ok.ToString().ToLower() + ",\"action\":\"autostart_enable\",\"enabled\":true}");
+                        } else if (sub == "disable" || sub == "off" || sub == "false") {
+                            bool ok = SetAutoStart(false, null);
+                            Console.WriteLine("{\"success\":" + ok.ToString().ToLower() + ",\"action\":\"autostart_disable\",\"enabled\":false}");
+                        } else {
+                            bool isEnabled = GetAutoStartStatus();
+                            Console.WriteLine("{\"success\":true,\"action\":\"autostart_status\",\"enabled\":" + isEnabled.ToString().ToLower() + "}");
+                        }
+                        break;
+                    }
                     case "resolve": {
                         string targetApp = args.Length > 1 ? args[1] : "";
                         string resolved = ResolveAppTarget(targetApp);
@@ -985,9 +1105,20 @@ namespace MyraaNativeClicker {
                         break;
                     }
                     case "type": {
-                        string text = args.Length >= 2 ? args[1] : "";
+                        string text = "";
                         int delay = 5;
-                        if (args.Length >= 3) int.TryParse(args[2], out delay);
+                        if (args.Length >= 2) {
+                            if (args[1] == "--b64" || args[1] == "-b64") {
+                                if (args.Length >= 3) {
+                                    byte[] data = Convert.FromBase64String(args[2]);
+                                    text = Encoding.UTF8.GetString(data);
+                                    if (args.Length >= 4) int.TryParse(args[3], out delay);
+                                }
+                            } else {
+                                text = args[1];
+                                if (args.Length >= 3) int.TryParse(args[2], out delay);
+                            }
+                        }
                         SendUnicodeText(text, delay);
                         Console.WriteLine("{\"success\":true,\"action\":\"type\",\"chars\":" + text.Length + "}");
                         break;
@@ -1153,6 +1284,10 @@ namespace MyraaNativeClicker {
                             Console.WriteLine("{\"success\":true,\"action\":\"clipboard_get\",\"text\":\"" + EscapeJson(text) + "\"}");
                         } else if (op == "set") {
                             string text = args.Length >= 3 ? args[2] : "";
+                            if (args.Length >= 4 && (args[2] == "--b64" || args[2] == "-b64")) {
+                                byte[] data = Convert.FromBase64String(args[3]);
+                                text = Encoding.UTF8.GetString(data);
+                            }
                             Clipboard.SetText(text);
                             Console.WriteLine("{\"success\":true,\"action\":\"clipboard_set\",\"length\":" + text.Length + "}");
                         } else if (op == "clear") {

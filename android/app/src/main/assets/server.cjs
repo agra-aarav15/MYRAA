@@ -1,3 +1,5 @@
+const path = require("path");
+const fs = require("fs");
 var __create = Object.create;
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -37,7 +39,13 @@ var import_genai = require("@google/genai");
 // server_paths.ts
 var import_fs = __toESM(require("fs"), 1);
 var import_path = __toESM(require("path"), 1);
-var DATA_DIR = process.env.MYRAA_DATA_DIR || process.cwd();
+const appDataDir = process.env.APPDATA || (process.platform === 'darwin' ? path.join(process.env.HOME || '', 'Library', 'Application Support') : path.join(process.env.HOME || '', '.config'));
+var DATA_DIR = process.env.MYRAA_DATA_DIR || path.join(appDataDir, 'myraa');
+try {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  fs.mkdirSync(path.join(DATA_DIR, 'logs'), { recursive: true });
+  fs.mkdirSync(path.join(DATA_DIR, 'screenshots'), { recursive: true });
+} catch {}
 try {
   import_fs.default.mkdirSync(DATA_DIR, { recursive: true });
 } catch {
@@ -49,10 +57,10 @@ var SECRETS_FILE = dataFile("secrets.json");
 function readSecrets() {
   const possiblePaths = [
     SECRETS_FILE,
-    import_path.default.join(process.cwd(), "secrets.json"),
-    import_path.default.resolve(__dirname, "..", "secrets.json"),
-    "F:\\release\\win-unpacked\\resources\\app\\secrets.json",
-    "C:\\Users\\AUSU\\AppData\\Roaming\\myraa\\secrets.json"
+    path.join(DATA_DIR, "secrets.json"),
+    path.join(process.cwd(), "secrets.json"),
+    path.resolve(__dirname, "..", "secrets.json"),
+    path.resolve(__dirname, "secrets.json")
   ];
   for (const p of possiblePaths) {
     try {
@@ -85,7 +93,7 @@ function setGeminiApiKey(key) {
     SECRETS_FILE,
     import_path.default.join(process.cwd(), "secrets.json"),
     import_path.default.resolve(__dirname, "..", "secrets.json"),
-    "F:\\release\\win-unpacked\\resources\\app\\secrets.json"
+    path.join(process.cwd(), "secrets.json")
   ];
   for (const p of possiblePaths) {
     try {
@@ -102,7 +110,7 @@ function clearGeminiApiKey() {
     SECRETS_FILE,
     import_path.default.join(process.cwd(), "secrets.json"),
     import_path.default.resolve(__dirname, "..", "secrets.json"),
-    "F:\\release\\win-unpacked\\resources\\app\\secrets.json"
+    path.join(process.cwd(), "secrets.json")
   ];
   for (const p of possiblePaths) {
     try {
@@ -417,7 +425,7 @@ function spawnDesktopAgent() {
     import_path2.default.resolve(__dirname, "../../agent/myraa-agent.exe"),
     import_path2.default.resolve(__dirname, "../agent/myraa-agent.exe"),
     import_path2.default.resolve(process.cwd(), "../agent/myraa-agent.exe"),
-    "F:\\release\\win-unpacked\\resources\\agent\\myraa-agent.exe",
+    
     import_path2.default.join(process.cwd(), "agent_dist", "myraa-agent", "myraa-agent.exe")
   ].find((candidate) => Boolean(candidate && fs3.existsSync(candidate)));
   if (frozenExe) {
@@ -440,7 +448,7 @@ function spawnDesktopAgent() {
   }
   const candidates = [
     process.env.MYRAA_PYTHON,
-    "C:\\Users\\MSI\\AppData\\Local\\Programs\\Python\\Python311\\python.exe",
+    
     "python",
     "python3"
   ].filter(Boolean);
@@ -481,23 +489,23 @@ async function isDesktopAgentAlive() {
   }
 }
 async function ensureDesktopAgent() {
-  if (desktopAgentVerified) return;
   if (await isDesktopAgentAlive()) {
     desktopAgentVerified = true;
-    console.log("[Desktop Agent] Already running on port 8765.");
-    return;
+    return true;
   }
-  console.log("[Desktop Agent] Not detected. Auto-starting...");
+  desktopAgentVerified = false;
+  console.log("[Desktop Agent] Not running. Auto-starting...");
   spawnDesktopAgent();
-  for (let i = 1; i <= 10; i++) {
-    await new Promise((r) => setTimeout(r, 1e3));
+  for (let i = 1; i <= 6; i++) {
+    await new Promise((r) => setTimeout(r, 800));
     if (await isDesktopAgentAlive()) {
       desktopAgentVerified = true;
-      console.log(`[Desktop Agent] Online after ${i}s.`);
-      return;
+      console.log(`[Desktop Agent] Online after ${i * 0.8}s.`);
+      return true;
     }
   }
   console.log("[Desktop Agent] Native fallback active.");
+  return false;
 }
 
 async function isLocalAgentAlive() {
@@ -518,7 +526,7 @@ async function ensureLocalAgent() {
     import_path2.default.resolve(__dirname, "../local-agent.js"),
     import_path2.default.resolve(__dirname, "../../local-agent.js"),
     import_path2.default.resolve(process.cwd(), "local-agent.js"),
-    "F:\\release\\win-unpacked\\resources\\app\\local-agent.js"
+    path.resolve(__dirname, "../local-agent.js")
   ].find((p) => Boolean(p && fs3.existsSync(p)));
 
   if (localAgentScript) {
@@ -538,6 +546,85 @@ async function ensureLocalAgent() {
   }
 }
 
+
+let cachedScreenMetrics = null;
+let lastScreenCheck = 0;
+function getScreenMetrics() {
+  const now = Date.now();
+  if (cachedScreenMetrics && (now - lastScreenCheck < 10000)) {
+    return cachedScreenMetrics;
+  }
+  try {
+    const exe = getClickerExePath();
+    if (exe) {
+      const out = require("child_process").execFileSync(exe, ["screen"], { encoding: "utf8", timeout: 2000 });
+      const data = JSON.parse(out.trim());
+      if (data.width && data.height) {
+        cachedScreenMetrics = data;
+        lastScreenCheck = now;
+        return data;
+      }
+    }
+  } catch {}
+  return { width: 1920, height: 1080 };
+}
+
+function scaleCoordinates(rawX, rawY) {
+  if (rawX === undefined || rawX === null || isNaN(rawX)) return { x: -1, y: -1 };
+  const metrics = getScreenMetrics();
+  const screenW = metrics.width || 1920;
+  const screenH = metrics.height || 1080;
+
+  let x = Number(rawX);
+  let y = Number(rawY);
+
+  if (x > 0 && x <= 1 && y > 0 && y <= 1) {
+    return { x: Math.round(x * screenW), y: Math.round(y * screenH) };
+  }
+
+  if (screenW !== 1280 && x > 0 && x <= 1280 && y > 0 && y <= 720) {
+    return {
+      x: Math.round(x * (screenW / 1280)),
+      y: Math.round(y * (screenH / 720))
+    };
+  }
+
+  return { x: Math.round(x), y: Math.round(y) };
+}
+
+function resolveUserPath(inputPath) {
+  if (!inputPath) return "";
+  const p = String(inputPath).trim();
+  const userHome = process.env.USERPROFILE || process.env.HOME || process.cwd();
+  const lower = p.toLowerCase();
+  if (lower === "desktop" || lower === "/desktop" || lower === "\\desktop") {
+    return path.join(userHome, "Desktop");
+  }
+  if (lower.startsWith("desktop/") || lower.startsWith("desktop\\")) {
+    return path.join(userHome, "Desktop", p.slice(8));
+  }
+  if (lower === "documents" || lower === "docs") {
+    return path.join(userHome, "Documents");
+  }
+  if (lower.startsWith("documents/") || lower.startsWith("documents\\")) {
+    return path.join(userHome, "Documents", p.slice(10));
+  }
+  if (lower === "downloads") {
+    return path.join(userHome, "Downloads");
+  }
+  if (lower.startsWith("downloads/") || lower.startsWith("downloads\\")) {
+    return path.join(userHome, "Downloads", p.slice(10));
+  }
+  if (lower === "pictures" || lower === "photos") {
+    return path.join(userHome, "Pictures");
+  }
+  if (lower === "music") {
+    return path.join(userHome, "Music");
+  }
+  if (path.isAbsolute(p)) return p;
+  return path.resolve(process.cwd(), p);
+}
+
 function isUnix() {
   return process.platform === "darwin" || process.platform === "linux";
 }
@@ -548,12 +635,16 @@ function getClickerExePath() {
     path.resolve(__dirname, "../agent/clicker.exe"),
     path.resolve(__dirname, "agent/clicker.exe"),
     path.resolve(__dirname, "../build/clicker.exe"),
+    path.resolve(__dirname, "build/clicker.exe"),
+    path.resolve(__dirname, "clicker.exe"),
     path.join(process.resourcesPath || "", "agent", "clicker.exe"),
+    path.join(process.resourcesPath || "", "clicker.exe"),
     path.resolve(process.cwd(), "resources/agent/clicker.exe"),
     path.resolve(process.cwd(), "resources/app/build/clicker.exe"),
+    path.resolve(process.cwd(), "build/clicker.exe"),
+    path.resolve(process.cwd(), "clicker.exe"),
     path.resolve(process.cwd(), "../agent/clicker.exe"),
-    "F:\\release\\win-unpacked\\resources\\agent\\clicker.exe",
-    "F:\\release\\win-unpacked\\clicker.exe"
+    path.resolve(process.cwd(), "agent/clicker.exe")
   ];
   for (const p of possiblePaths) {
     if (p && fs.existsSync(p)) return p;
@@ -1203,7 +1294,91 @@ async function callDesktopAgent(tool, args = {}) {
       response = { ok: true, result: "Standard DirectX/OpenGL display adapter detected." };
     }
   } else if (tool === "temperatureInfo") {
-    response = { ok: true, result: "System thermal sensors are within normal nominal operating temperatures (45°C - 55°C)." };
+    try {
+      const out = require("child_process").execSync("powershell -NoProfile -Command \"Get-CimInstance -Namespace root/wmi -ClassName MSAcpi_ThermalZoneTemperature -ErrorAction SilentlyContinue | Select-Object -ExpandProperty CurrentTemperature\"", { encoding: "utf8", timeout: 2000 });
+      const raw = Number(out.trim());
+      if (!isNaN(raw) && raw > 2732) {
+        const degC = Math.round((raw / 10 - 273.15) * 10) / 10;
+        response = { ok: true, temperature_c: degC, result: `CPU Thermal Zone Temperature: ${degC}°C` };
+      }
+    } catch {}
+    if (!response) {
+      response = { ok: true, supported: false, result: "Hardware temperature sensors are not exposed by the ACPI BIOS on this system." };
+    }
+  } else if (["takeScreenshot", "saveScreenshot", "analyzeScreenshot", "readScreen"].includes(tool)) {
+    const clickerExe = getClickerExePath();
+    const savePath = args.filePath || args.path || (tool === "saveScreenshot" ? path.join(DATA_DIR, "screenshots", `screenshot_${Date.now()}.png`) : null);
+    if (clickerExe) {
+      try {
+        if (savePath) {
+          const out = require("child_process").execFileSync(clickerExe, ["screenshot", savePath], { encoding: "utf8", timeout: 4000 });
+          const p = JSON.parse(out.trim());
+          response = { ok: true, path: savePath, result: `Screenshot saved successfully to ${savePath}.` };
+        } else {
+          const out = require("child_process").execFileSync(clickerExe, ["screenshot", "--base64"], { encoding: "utf8", timeout: 4000 });
+          const p = JSON.parse(out.trim());
+          response = { ok: true, data: p.data, format: "base64", result: "Screenshot captured successfully." };
+        }
+      } catch (e) {
+        logError("Screenshot failed: " + e.message);
+      }
+    }
+    if (!response) {
+      response = { ok: false, error: "Native screenshot capture failed." };
+    }
+  } else if (["enableAutoStart", "disableAutoStart", "getAutoStartStatus"].includes(tool)) {
+    const clickerExe = getClickerExePath();
+    const sub = tool === "enableAutoStart" ? "enable" : tool === "disableAutoStart" ? "disable" : "status";
+    if (clickerExe) {
+      try {
+        const exeTarget = process.execPath || path.resolve(process.cwd(), "MYRAA.exe");
+        const out = require("child_process").execFileSync(clickerExe, ["autostart", sub, exeTarget], { encoding: "utf8", timeout: 3000 });
+        const p = JSON.parse(out.trim());
+        response = { ok: Boolean(p.success), ...p, result: `AutoStart ${sub} status: ${p.enabled ?? p.success}` };
+      } catch (e) {
+        logError("AutoStart action failed: " + e.message);
+      }
+    }
+    if (!response) {
+      response = { ok: false, error: `Failed to execute ${tool}.` };
+    }
+  } else if (tool === "desktopBrowserFillForm") {
+    const fields = args.fields || args.formData || {};
+    let filled = 0;
+    const clickerExe = getClickerExePath();
+    for (const [key, val] of Object.entries(fields)) {
+      nativeTypeText(String(val));
+      if (clickerExe) {
+        try { require("child_process").execFileSync(clickerExe, ["key", "tab"], { timeout: 1000 }); } catch {}
+      }
+      filled++;
+    }
+    response = { ok: true, filled, result: `Filled ${filled} form fields into active browser window.` };
+  } else if (tool === "desktopBrowserOpenTab") {
+    const clickerExe = getClickerExePath();
+    if (clickerExe) {
+      try { require("child_process").execFileSync(clickerExe, ["key", "ctrl+t"], { timeout: 2000 }); } catch {}
+    }
+    if (args.url) nativeOpenWebsite({ url: args.url });
+    response = { ok: true, result: "Opened new browser tab." };
+  } else if (tool === "desktopBrowserCloseTab") {
+    const clickerExe = getClickerExePath();
+    if (clickerExe) {
+      try { require("child_process").execFileSync(clickerExe, ["key", "ctrl+w"], { timeout: 2000 }); } catch {}
+    }
+    response = { ok: true, result: "Closed active browser tab." };
+  } else if (tool === "desktopBrowserGoBack") {
+    const clickerExe = getClickerExePath();
+    if (clickerExe) {
+      try { require("child_process").execFileSync(clickerExe, ["key", "alt+left"], { timeout: 2000 }); } catch {}
+    }
+    response = { ok: true, result: "Navigated back in browser history." };
+  } else if (tool === "desktopBrowserGoForward") {
+    const clickerExe = getClickerExePath();
+    if (clickerExe) {
+      try { require("child_process").execFileSync(clickerExe, ["key", "alt+right"], { timeout: 2000 }); } catch {}
+    }
+    response = { ok: true, result: "Navigated forward in browser history." };
   }
 
   // 9. Browser Automation & Searches
@@ -1312,7 +1487,7 @@ async function callDesktopAgent(tool, args = {}) {
   }
 
   if (!response) {
-    response = { ok: true, result: `Action ${tool} completed successfully.` };
+    response = { ok: false, error: `Action ${tool} failed: no execution handler or desktop agent succeeded.` };
   }
 
   lastToolExec = { name: tool + argsKey, time: now, result: response };
@@ -2358,10 +2533,11 @@ ${interceptorScript}`);
                       }));
                     } catch (err) {
                       console.error(`[Desktop Tool Error] ${fc.name}:`, err);
+                      logError(`[TOOL_ERROR] ${fc.name}: ${err.message}`);
                       session.sendToolResponse({
                         functionResponses: [{
                           name: fc.name,
-                          response: { output: { result: `Completed with note: ${err.message}` } },
+                          response: { output: { ok: false, error: `Tool ${fc.name} error: ${err.message}` } },
                           id: fc.id
                         }]
                       });
@@ -2490,7 +2666,7 @@ ${interceptorScript}`);
       next();
     }
   });
-  server.listen(PORT, "0.0.0.0", () => {
+  server.listen(PORT, "127.0.0.1", () => {
     logStartup(`MYRAA V2 server started on http://localhost:${PORT}`);
     console.log(`[Server] Running on http://localhost:${PORT}`);
     ensureDesktopAgent().catch(() => {});

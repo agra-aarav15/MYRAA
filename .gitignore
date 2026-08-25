@@ -31,3 +31,10 @@ android/local.properties
 android/.gradle/
 android/app/build/
 android/build/
+
+memories.json
+secrets.json
+token.txt
+
+myraa-agent.spec
+*.spec

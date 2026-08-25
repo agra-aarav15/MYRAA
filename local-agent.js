@@ -11,7 +11,17 @@ import { chromium } from 'playwright';
 const app = express();
 const PORT = 3001;
 
-app.use(cors());
+const allowedOrigins = ['http://127.0.0.1:3000', 'http://localhost:3000', 'http://127.0.0.1:3001', 'http://localhost:3001'];
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin) || origin.startsWith('file://') || origin === 'null') {
+      callback(null, true);
+    } else {
+      callback(new Error('Blocked by CORS policy'));
+    }
+  }
+}));
+
 app.use(express.json());
 
 let browser = null;
@@ -83,7 +93,7 @@ app.post('/api/navigate', async (req, res) => {
 async function smartClick(p, target, options = {}) {
   const timeout = options.timeout || 6000;
   
-  // Strategy 1: If target looks like a valid CSS/XPath selector
+  // Strategy 1: CSS/XPath selector
   try {
     const el = p.locator(target).first();
     if (await el.isVisible({ timeout: 1500 })) {
@@ -101,7 +111,7 @@ async function smartClick(p, target, options = {}) {
     }
   } catch {}
 
-  // Strategy 3: Role locator for interactive elements (button, link, tab, searchbox)
+  // Strategy 3: Role locator
   for (const role of ['button', 'link', 'tab', 'menuitem', 'combobox', 'searchbox']) {
     try {
       const roleLocator = p.getByRole(role, { name: new RegExp(target, 'i') }).first();
@@ -112,7 +122,7 @@ async function smartClick(p, target, options = {}) {
     } catch {}
   }
 
-  // Strategy 4: Placeholder or Aria-label match
+  // Strategy 4: Placeholder match
   try {
     const placeholderLocator = p.getByPlaceholder(target, { exact: false }).first();
     if (await placeholderLocator.isVisible({ timeout: 1000 })) {
@@ -121,7 +131,7 @@ async function smartClick(p, target, options = {}) {
     }
   } catch {}
 
-  // Strategy 5: Direct evaluate query across common clickable elements
+  // Strategy 5: DOM evaluation
   const clicked = await p.evaluate((term) => {
     const lower = term.toLowerCase();
     const candidates = Array.from(document.querySelectorAll('a, button, [role="button"], input[type="button"], input[type="submit"], h3, span, div'));
