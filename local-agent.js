@@ -14,7 +14,7 @@ const PORT = 3001;
 const allowedOrigins = ['http://127.0.0.1:3000', 'http://localhost:3000', 'http://127.0.0.1:3001', 'http://localhost:3001'];
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes(origin) || origin.startsWith('file://') || origin === 'null') {
+    if (!origin || allowedOrigins.includes(origin) || origin.startsWith('file://')) {
       callback(null, true);
     } else {
       callback(new Error('Blocked by CORS policy'));

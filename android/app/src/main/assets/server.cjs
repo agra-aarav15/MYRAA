@@ -40,7 +40,24 @@ var import_genai = require("@google/genai");
 var import_fs = __toESM(require("fs"), 1);
 var import_path = __toESM(require("path"), 1);
 const appDataDir = process.env.APPDATA || (process.platform === 'darwin' ? path.join(process.env.HOME || '', 'Library', 'Application Support') : path.join(process.env.HOME || '', '.config'));
+
+
+
 var DATA_DIR = process.env.MYRAA_DATA_DIR || path.join(appDataDir, 'myraa');
+const AUTH_TOKEN_FILE = path.join(DATA_DIR, "token.txt");
+function getAuthToken() {
+  try {
+    if (fs.existsSync(AUTH_TOKEN_FILE)) {
+      const t = fs.readFileSync(AUTH_TOKEN_FILE, "utf8").trim();
+      if (t) return t;
+    }
+  } catch {}
+  const newToken = require("crypto").randomBytes(24).toString("hex");
+  try { fs.writeFileSync(AUTH_TOKEN_FILE, newToken, "utf8"); } catch {}
+  return newToken;
+}
+const MYRAA_AUTH_TOKEN = getAuthToken();
+
 try {
   fs.mkdirSync(DATA_DIR, { recursive: true });
   fs.mkdirSync(path.join(DATA_DIR, 'logs'), { recursive: true });
@@ -547,6 +564,7 @@ async function ensureLocalAgent() {
 }
 
 
+
 let cachedScreenMetrics = null;
 let lastScreenCheck = 0;
 function getScreenMetrics() {
@@ -583,10 +601,10 @@ function scaleCoordinates(rawX, rawY) {
   }
 
   if (screenW !== 1280 && x > 0 && x <= 1280 && y > 0 && y <= 720) {
-    return {
-      x: Math.round(x * (screenW / 1280)),
-      y: Math.round(y * (screenH / 720))
-    };
+    const scaledX = Math.round(x * (screenW / 1280));
+    const scaledY = Math.round(y * (screenH / 720));
+    logCommand(`[COORD_SCALE] (${x}, ${y}) -> (${scaledX}, ${scaledY}) on ${screenW}x${screenH}`);
+    return { x: scaledX, y: scaledY };
   }
 
   return { x: Math.round(x), y: Math.round(y) };
@@ -655,69 +673,39 @@ function getClickerExePath() {
 function nativeOpenApp(name) {
   if (!name) return { ok: false, error: "Application name is required" };
   const trimmed = name.trim();
-  logCommand("OPEN_APP: " + name);
+  logCommand("OPEN_APP: " + trimmed);
 
-  if (process.platform === "darwin") {
+  const exePath = getClickerExePath();
+  if (exePath) {
     try {
-      require("child_process").exec('open -a "' + name + '" || open "' + name + '"');
-      return { ok: true, result: "Opened " + name + " on macOS." };
-    } catch (e) {
-      return { ok: false, error: "Could not open " + name + " on macOS: " + e.message };
-    }
-  }
-
-  if (process.platform === "linux") {
-    try {
-      require("child_process").exec('xdg-open "' + trimmed + '" || ' + trimmed + ' &');
-      return { ok: true, result: "Launched " + name + " on Linux." };
-    } catch (e) {
-      return { ok: false, error: "Could not launch " + name + " on Linux: " + e.message };
-    }
-  }
-
-  // Windows platform: prioritize native clicker.exe with Win32 SetForegroundWindow & AttachThreadInput
-  const clickerExe = getClickerExePath();
-  if (clickerExe) {
-    try {
-      const cleanName = trimmed.replace(/"/g, '');
-      const out = require("child_process").execSync(`"${clickerExe}" launch "${cleanName}"`, { encoding: "utf8", timeout: 6000 });
-      if (out && (out.includes('"success":true') || out.includes('status'))) {
-        try {
-          const parsed = JSON.parse(out.trim());
-          return { ok: true, result: (parsed.title || name) + " opened in the foreground.", ...parsed };
-        } catch {
-          return { ok: true, result: name + " opened in the foreground." };
-        }
+      const out = require("child_process").execFileSync(exePath, ["launch", trimmed], { encoding: "utf8", timeout: 6000 });
+      const p = JSON.parse(out.trim());
+      if (p.success) {
+        return { ok: true, result: (p.title || trimmed) + " opened in the foreground.", ...p };
       }
-    } catch (err) {
-      console.warn("clicker launch warn:", err.message);
+    } catch (e) {
+      logError("clicker launch error: " + e.message);
     }
   }
 
   const known = {
     "notepad": { exe: "notepad.exe", title: "Notepad" },
-    "notes": { exe: "notepad.exe", title: "Notepad" },
-    "calc": { exe: "calc.exe", title: "Calculator" },
     "calculator": { exe: "calc.exe", title: "Calculator" },
-    "chrome": { exe: "chrome.exe", title: "Chrome" },
-    "google chrome": { exe: "chrome.exe", title: "Chrome" },
-    "browser": { exe: "chrome.exe", title: "Chrome" },
-    "edge": { exe: "msedge.exe", title: "Edge" },
-    "microsoft edge": { exe: "msedge.exe", title: "Edge" },
-    "explorer": { exe: "explorer.exe", title: "File Explorer" },
-    "files": { exe: "explorer.exe", title: "File Explorer" },
-    "file explorer": { exe: "explorer.exe", title: "File Explorer" },
-    "cmd": { exe: "cmd.exe", title: "Command Prompt" },
+    "calc": { exe: "calc.exe", title: "Calculator" },
     "command prompt": { exe: "cmd.exe", title: "Command Prompt" },
-    "powershell": { exe: "powershell.exe", title: "PowerShell" },
+    "cmd": { exe: "cmd.exe", title: "Command Prompt" },
     "terminal": { exe: "wt.exe", title: "Terminal" },
+    "powershell": { exe: "powershell.exe", title: "Windows PowerShell" },
+    "file explorer": { exe: "explorer.exe", title: "File Explorer" },
+    "explorer": { exe: "explorer.exe", title: "File Explorer" },
     "paint": { exe: "mspaint.exe", title: "Paint" },
-    "vscode": { exe: "code", title: "Visual Studio Code" },
-    "code": { exe: "code", title: "Visual Studio Code" },
-    "visual studio code": { exe: "code", title: "Visual Studio Code" },
-    "cursor": { exe: "cursor", title: "Cursor" },
-    "antigravity": { exe: "antigravity", title: "Antigravity" },
-    "spotify": { exe: "spotify", title: "Spotify" },
+    "chrome": { exe: "chrome.exe", title: "Google Chrome" },
+    "google chrome": { exe: "chrome.exe", title: "Google Chrome" },
+    "edge": { exe: "msedge.exe", title: "Microsoft Edge" },
+    "microsoft edge": { exe: "msedge.exe", title: "Microsoft Edge" },
+    "vscode": { exe: "code.cmd", title: "Visual Studio Code" },
+    "vs code": { exe: "code.cmd", title: "Visual Studio Code" },
+    "visual studio code": { exe: "code.cmd", title: "Visual Studio Code" },
     "discord": { exe: "discord", title: "Discord" },
     "telegram": { exe: "telegram", title: "Telegram" },
     "task manager": { exe: "taskmgr.exe", title: "Task Manager" },
@@ -731,17 +719,22 @@ function nativeOpenApp(name) {
   const targetExe = appInfo ? appInfo.exe : trimmed;
   const targetTitle = appInfo ? appInfo.title : name;
 
+  const b64Target = Buffer.from(targetExe, "utf8").toString("base64");
+  const b64Title = Buffer.from(targetTitle, "utf8").toString("base64");
+  const b64Name = Buffer.from(trimmed, "utf8").toString("base64");
+
   const ps = `
-    $target = "${targetExe}";
-    $title = "${targetTitle}";
+    $target = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('${b64Target}'));
+    $title = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('${b64Title}'));
+    $name = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('${b64Name}'));
     if ($target -like "start *") {
       Invoke-Expression $target;
     } else {
       $p = Start-Process -FilePath $target -PassThru -WindowStyle Normal -ErrorAction SilentlyContinue;
       if (-not $p) {
-        $app = Get-StartApps | Where-Object { $_.Name -like "*${name}*" } | Select-Object -First 1;
+        $app = Get-StartApps | Where-Object { $_.Name -like "*$name*" } | Select-Object -First 1;
         if ($app) {
-          Start-Process "shell:AppsFolder\\$($app.AppID)" -WindowStyle Normal;
+          Start-Process "shell:AppsFolder\$($app.AppID)" -WindowStyle Normal;
         } else {
           Start-Process $target -WindowStyle Normal;
         }
@@ -754,30 +747,27 @@ function nativeOpenApp(name) {
   `;
 
   try {
-    require("child_process").execSync(`powershell -NoProfile -ExecutionPolicy Bypass -Command "${ps.replace(/\n/g, " ")}"`, { timeout: 8000 });
-    return { ok: true, result: name + " opened in the foreground." };
+    require("child_process").execFileSync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps.replace(/\n/g, " ")], { timeout: 8000 });
+    return { ok: true, result: trimmed + " opened in the foreground." };
   } catch (err) {
     try {
-      require("child_process").exec(`start "" "${targetExe}"`, { shell: "cmd.exe" });
-      return { ok: true, result: name + " launched." };
+      require("child_process").execFile("explorer.exe", [targetExe]);
+      return { ok: true, result: trimmed + " launched via Explorer." };
     } catch (e2) {
-      return { ok: false, error: "Could not launch " + name + ": " + err.message };
+      return { ok: false, error: "Could not launch " + trimmed + ": " + err.message };
     }
   }
 }
 
 function nativeMouseClick(args = {}) {
-  const x = Number(args.x);
-  const y = Number(args.y);
-  let button = (args.button || "left").toLowerCase();
-  let clicks = Number(args.clicks) || 1;
-  if (args.double || button === "double") {
-    button = "left";
-    clicks = 2;
-  }
-  logCommand("MOUSE_CLICK: (" + x + ", " + y + ") " + button + " " + clicks + "x");
+  const scaled = scaleCoordinates(args.x, args.y);
+  const x = scaled.x;
+  const y = scaled.y;
+  const button = (args.button || "left").toLowerCase().trim();
+  const clicks = Math.max(1, Math.min(3, Number(args.clicks || args.count || 1)));
+  logCommand("MOUSE_CLICK: " + button + " button, clicks=" + clicks + " at (" + x + ", " + y + ") [raw: " + args.x + ", " + args.y + "]");
 
-  if (process.platform !== "win32") {
+  if (process.platform === "darwin") {
     return { ok: true, result: "Simulated " + button + " click at (" + x + ", " + y + ") on " + process.platform + "." };
   }
 
@@ -786,10 +776,11 @@ function nativeMouseClick(args = {}) {
     try {
       const targetX = isNaN(x) ? -1 : Math.round(x);
       const targetY = isNaN(y) ? -1 : Math.round(y);
-      const out = require("child_process").execSync(`"${exePath}" click ${targetX} ${targetY} ${button} ${clicks}`, { encoding: "utf8", timeout: 3000 });
-      return { ok: true, result: "Clicked " + button + " mouse button " + (clicks > 1 ? clicks + " times " : "") + (targetX >= 0 ? "at (" + targetX + ", " + targetY + ")" : "at cursor position") + "." };
+      const out = require("child_process").execFileSync(exePath, ["click", String(targetX), String(targetY), button, String(clicks)], { encoding: "utf8", timeout: 4000 });
+      return { ok: true, result: "Clicked " + button + " mouse button " + (clicks > 1 ? clicks + " times " : "") + (targetX >= 0 ? "at (" + targetX + ", " + targetY + ")" : "at cursor position") + ".", x: targetX, y: targetY };
     } catch (err) {
-      console.warn("clicker click warn:", err.message);
+      logError("clicker click error: " + err.message);
+      return { ok: false, error: "Mouse click failed: " + err.message };
     }
   }
 
@@ -822,18 +813,21 @@ function nativeTypeText(text) {
   const exePath = getClickerExePath();
   if (exePath) {
     try {
-      const clean = text.replace(/"/g, "\"");
-      require("child_process").execSync(`"${exePath}" type "${clean}"`, { encoding: "utf8", timeout: 4000 });
+      const b64 = Buffer.from(text, "utf8").toString("base64");
+      require("child_process").execFileSync(exePath, ["type", "--b64", b64], { encoding: "utf8", timeout: 6000 });
       return { ok: true, result: "Typed text (" + text.length + " chars)." };
-    } catch (e) {}
+    } catch (e) {
+      logError("clicker type error: " + e.message);
+    }
   }
 
   try {
-    const escaped = text.replace(/[{}+^%~()\[\]]/g, "{$&}").replace(/"/g, "`\"");
-    require("child_process").execSync(`powershell -NoProfile -Command "$wshell = New-Object -ComObject WScript.Shell; $wshell.SendKeys(\"${escaped}\")"`, { timeout: 4000 });
+    const b64 = Buffer.from(text, "utf8").toString("base64");
+    const ps = `$bytes = [System.Convert]::FromBase64String('${b64}'); $str = [System.Text.Encoding]::UTF8.GetString($bytes); [System.Windows.Forms.SendKeys]::SendWait($str);`;
+    require("child_process").execFileSync("powershell.exe", ["-NoProfile", "-Command", ps], { timeout: 4000 });
     return { ok: true, result: "Typed text into active window." };
   } catch (e2) {
-    return { ok: false, error: e2.message };
+    return { ok: false, error: "Typing failed: " + e2.message };
   }
 }
 
@@ -877,75 +871,98 @@ function nativeRunTerminal(command) {
 }
 
 function nativeDeveloperProjectTool(action, args = {}) {
-  const fs = require("fs");
-  const path = require("path");
   try {
     if (action === "createProjectFolder" || action === "openFolder") {
-      const folderPath = args.folderPath || args.path || args.name;
-      if (!folderPath) return { ok: false, error: "folderPath is required" };
-      fs.mkdirSync(folderPath, { recursive: true });
-      if (action === "openFolder") {
+      const rawPath = args.folderPath || args.path || args.name || args.folder || args.directory;
+      if (!rawPath) return { ok: false, error: "folderPath is required" };
+      const folderPath = resolveUserPath(rawPath);
+      if (action === "createProjectFolder") {
+        fs.mkdirSync(folderPath, { recursive: true });
+        return { ok: true, result: `Created project directory: ${folderPath}`, path: folderPath };
+      } else {
+        if (!fs.existsSync(folderPath)) {
+          fs.mkdirSync(folderPath, { recursive: true });
+        }
         if (process.platform === "win32") {
           require("child_process").exec(`explorer.exe "${folderPath}"`);
         }
-        return { ok: true, result: `Opened folder: ${folderPath}` };
+        return { ok: true, result: `Opened folder: ${folderPath}`, path: folderPath };
       }
-      return { ok: true, result: `Created project directory: ${folderPath}` };
     }
     if (action === "writeCodeFile" || action === "createFile" || action === "createPythonFile") {
-      const filePath = args.filePath || args.path || args.fileName;
-      const content = args.content || args.code || "";
-      if (!filePath) return { ok: false, error: "filePath is required" };
+      const rawPath = args.filePath || args.path || args.fileName || args.file_name;
+      const content = args.content ?? args.code ?? "";
+      if (!rawPath) return { ok: false, error: "filePath is required" };
+      const filePath = resolveUserPath(rawPath);
       fs.mkdirSync(path.dirname(filePath), { recursive: true });
       fs.writeFileSync(filePath, content, "utf8");
-      return { ok: true, result: `Written file: ${filePath} (${content.length} chars)` };
+      return { ok: true, result: `Written file: ${filePath} (${content.length} chars)`, path: filePath };
     }
     if (action === "readFile") {
-      const filePath = args.filePath || args.path;
-      if (!filePath || !fs.existsSync(filePath)) return { ok: false, error: `File not found: ${filePath}` };
+      const rawPath = args.filePath || args.path || args.fileName || args.file_name;
+      if (!rawPath) return { ok: false, error: "filePath is required" };
+      const filePath = resolveUserPath(rawPath);
+      if (!fs.existsSync(filePath)) return { ok: false, error: `File not found: ${filePath}` };
       const content = fs.readFileSync(filePath, "utf8");
-      return { ok: true, content: content.slice(0, 8000), result: `Read ${content.length} chars from ${filePath}` };
+      return { ok: true, content: content.slice(0, 8000), result: `Read ${content.length} chars from ${filePath}`, path: filePath };
     }
     if (action === "deleteFile") {
-      const filePath = args.filePath || args.path;
-      if (!filePath || !fs.existsSync(filePath)) return { ok: false, error: `File not found: ${filePath}` };
+      const rawPath = args.filePath || args.path || args.fileName || args.file_name;
+      if (!rawPath) return { ok: false, error: "filePath is required" };
+      const filePath = resolveUserPath(rawPath);
+      if (!fs.existsSync(filePath)) return { ok: false, error: `File not found: ${filePath}` };
       fs.unlinkSync(filePath);
-      return { ok: true, result: `Deleted file: ${filePath}` };
+      return { ok: true, result: `Deleted file: ${filePath}`, path: filePath };
     }
     if (action === "renameFile" || action === "moveFile") {
-      const oldPath = args.oldPath || args.filePath || args.source;
-      const newPath = args.newPath || args.destination || args.target;
-      if (!oldPath || !newPath) return { ok: false, error: "Source and destination paths are required" };
+      const rawOld = args.oldPath || args.filePath || args.source || args.path || args.old_path;
+      const rawNew = args.newPath || args.destination || args.target || args.new_name || args.new_path || args.newName;
+      if (!rawOld || !rawNew) return { ok: false, error: "Source and destination paths are required" };
+      const oldPath = resolveUserPath(rawOld);
+      let newPath = String(rawNew).trim();
+      if (!path.isAbsolute(newPath) && !newPath.includes("/") && !newPath.includes("\\")) {
+        newPath = path.join(path.dirname(oldPath), newPath);
+      } else {
+        newPath = resolveUserPath(newPath);
+      }
       if (!fs.existsSync(oldPath)) return { ok: false, error: `Source not found: ${oldPath}` };
       fs.mkdirSync(path.dirname(newPath), { recursive: true });
       fs.renameSync(oldPath, newPath);
-      return { ok: true, result: `Moved/renamed ${oldPath} to ${newPath}` };
+      return { ok: true, result: `Moved/renamed ${oldPath} to ${newPath}`, oldPath, newPath };
     }
     if (action === "listFiles") {
-      const dirPath = args.dirPath || args.path || process.cwd();
+      const rawPath = args.dirPath || args.path || args.folder || args.directory || process.cwd();
+      const dirPath = resolveUserPath(rawPath);
+      if (!fs.existsSync(dirPath)) return { ok: false, error: `Directory not found: ${dirPath}` };
       const files = fs.readdirSync(dirPath).slice(0, 100);
-      return { ok: true, files, result: `Found ${files.length} items in ${dirPath}` };
+      return { ok: true, files, result: `Found ${files.length} items in ${dirPath}`, path: dirPath };
     }
     if (action === "searchFiles") {
-      const dirPath = args.dirPath || args.path || process.cwd();
-      const query = (args.query || args.pattern || "").toLowerCase();
+      const rawPath = args.folder || args.dirPath || args.path || args.directory || process.cwd();
+      const dirPath = resolveUserPath(rawPath);
+      const query = (args.query || args.pattern || args.name || "").toLowerCase();
+      const ext = (args.extension || "").toLowerCase().replace(/^\./, "");
+      const limit = Math.max(1, Math.min(200, Number(args.limit || 50)));
       const results = [];
       function walk(cur, depth = 0) {
-        if (depth > 3 || results.length > 50) return;
+        if (depth > 4 || results.length >= limit) return;
         try {
           const items = fs.readdirSync(cur, { withFileTypes: true });
           for (const item of items) {
-            if (item.name.toLowerCase().includes(query)) {
+            if (results.length >= limit) break;
+            const matchesQuery = !query || item.name.toLowerCase().includes(query);
+            const matchesExt = !ext || item.name.toLowerCase().endsWith("." + ext);
+            if (matchesQuery && matchesExt && !item.isDirectory()) {
               results.push(path.join(cur, item.name));
             }
-            if (item.isDirectory() && !item.name.startsWith(".")) {
+            if (item.isDirectory() && !item.name.startsWith(".") && item.name !== "node_modules") {
               walk(path.join(cur, item.name), depth + 1);
             }
           }
         } catch {}
       }
       walk(dirPath);
-      return { ok: true, results, result: `Found ${results.length} files matching "${query}"` };
+      return { ok: true, results, result: `Found ${results.length} files matching query in ${dirPath}` };
     }
   } catch (err) {
     return { ok: false, error: err.message };
@@ -972,17 +989,37 @@ async function callDesktopAgent(tool, args = {}) {
     response = nativeOpenApp(args.name || args.application || args.appName);
   } else if (["closeApplication", "closeApp"].includes(tool)) {
     const procName = args.name || args.application || args.appName || "";
+    if (!procName) return { ok: false, error: "Application name is required to close." };
     if (process.platform === "win32") {
+      let clickerSuccess = false;
+      const clickerExe = getClickerExePath();
+      if (clickerExe) {
+        try {
+          const out = require("child_process").execFileSync(clickerExe, ["window", "close", procName], { encoding: "utf8", timeout: 3000 });
+          const p = JSON.parse(out.trim());
+          if (p.success) clickerSuccess = true;
+        } catch {}
+      }
+      
+      let taskkillSuccess = false;
+      let taskkillError = "";
       try {
-        const clickerExe = getClickerExePath();
-        if (clickerExe) {
-          require("child_process").execSync(`"${clickerExe}" window close "${procName.replace(/"/g, '')}"`, { timeout: 2000 });
+        const target = procName.endsWith(".exe") ? procName : procName + ".exe";
+        const out = require("child_process").execSync(`taskkill /F /IM "${target}" 2>&1`, { encoding: "utf8", timeout: 3000 });
+        if (out.includes("SUCCESS:") || out.includes("PID")) {
+          taskkillSuccess = true;
+        } else if (out.includes("ERROR:") || out.includes("not found")) {
+          taskkillError = out.trim();
         }
-      } catch {}
-      try {
-        require("child_process").exec(`taskkill /F /IM "${procName.endsWith(".exe") ? procName : procName + ".exe"}"`, { shell: "cmd.exe" });
-      } catch {}
-      response = { ok: true, result: `Closed application ${procName}.` };
+      } catch (e) {
+        taskkillError = (e.stdout ? e.stdout.toString() : e.message).trim();
+      }
+
+      if (clickerSuccess || taskkillSuccess) {
+        response = { ok: true, result: `Closed application ${procName}.` };
+      } else {
+        response = { ok: false, error: `Could not close application "${procName}": ${taskkillError || "Process not running or not found."}` };
+      }
     } else {
       response = { ok: true, result: `Close requested for ${procName}.` };
     }
@@ -991,13 +1028,19 @@ async function callDesktopAgent(tool, args = {}) {
     const clickerExe = getClickerExePath();
     if (clickerExe && target) {
       try {
-        const out = require("child_process").execSync(`"${clickerExe}" activate "${target.replace(/"/g, '')}"`, { encoding: "utf8", timeout: 3000 });
+        const out = require("child_process").execFileSync(clickerExe, ["activate", target], { encoding: "utf8", timeout: 4000 });
         const p = JSON.parse(out.trim());
-        response = { ok: true, result: `Activated window "${p.title || target}" into the foreground.`, hwnd: p.hwnd };
-      } catch {}
-    }
-    if (!response) {
-      response = { ok: true, result: `Switched focus to ${target}.` };
+        if (p.success) {
+          response = { ok: true, result: `Activated window "${p.title || target}" into the foreground.`, hwnd: p.hwnd };
+        } else {
+          response = { ok: false, error: p.error || `Window "${target}" not found.` };
+        }
+      } catch (e) {
+        logError("switchApplication error: " + e.message);
+        response = { ok: false, error: `Failed to activate window "${target}": ${e.message}` };
+      }
+    } else {
+      response = { ok: false, error: "Target application/window name is required." };
     }
   }
 
@@ -1010,12 +1053,19 @@ async function callDesktopAgent(tool, args = {}) {
     const clickerExe = getClickerExePath();
     if (clickerExe) {
       try {
-        require("child_process").execSync(`"${clickerExe}" window ${action} "${target.replace(/"/g, '')}"`, { timeout: 3000 });
-        response = { ok: true, result: `Window ${action} executed successfully for "${target || 'active window'}".` };
-      } catch {}
-    }
-    if (!response) {
-      response = { ok: true, result: `Window ${action} executed.` };
+        const out = require("child_process").execFileSync(clickerExe, ["window", action, target], { encoding: "utf8", timeout: 3000 });
+        const p = JSON.parse(out.trim());
+        if (p.success) {
+          response = { ok: true, result: `Window ${action} executed successfully for "${target || 'active window'}".` };
+        } else {
+          response = { ok: false, error: p.error || `Window ${action} failed.` };
+        }
+      } catch (err) {
+        logError(`window ${action} error: ${err.message}`);
+        response = { ok: false, error: `Window ${action} failed: ${err.message}` };
+      }
+    } else {
+      response = { ok: false, error: "Clicker binary not available for window operation." };
     }
   }
 
@@ -1024,31 +1074,42 @@ async function callDesktopAgent(tool, args = {}) {
     response = nativeMouseClick(args);
   } else if (["moveMouse", "mouseMove", "moveCursor"].includes(tool)) {
     const clickerExe = getClickerExePath();
-    const x = Number(args.x);
-    const y = Number(args.y);
+    const scaled = scaleCoordinates(args.x, args.y);
+    const x = scaled.x;
+    const y = scaled.y;
+    logCommand(`MOVE_MOUSE: to (${x}, ${y}) [raw: ${args.x}, ${args.y}]`);
     if (clickerExe && !isNaN(x) && !isNaN(y)) {
       try {
-        require("child_process").execSync(`"${clickerExe}" move ${x} ${y}`, { timeout: 2000 });
+        require("child_process").execFileSync(clickerExe, ["move", String(x), String(y)], { encoding: "utf8", timeout: 3000 });
         response = { ok: true, result: `Moved mouse cursor to (${x}, ${y}).`, x, y };
-      } catch {}
-    }
-    if (!response) {
-      response = { ok: true, result: `Moved mouse to (${x}, ${y}).`, x, y };
+      } catch (err) {
+        logError(`clicker move error: ${err.message}`);
+        response = { ok: false, error: `Move mouse failed: ${err.message}` };
+      }
+    } else {
+      response = { ok: false, error: "Invalid coordinates for mouse move." };
     }
   } else if (["mouseDrag", "drag"].includes(tool)) {
     const clickerExe = getClickerExePath();
-    const sX = Number(args.startX || args.x1 || 0);
-    const sY = Number(args.startY || args.y1 || 0);
-    const eX = Number(args.endX || args.x2 || 0);
-    const eY = Number(args.endY || args.y2 || 0);
+    const startScaled = scaleCoordinates(args.startX ?? args.x1 ?? 0, args.startY ?? args.y1 ?? 0);
+    const endScaled = scaleCoordinates(args.endX ?? args.x2 ?? 0, args.endY ?? args.y2 ?? 0);
+    const sX = startScaled.x;
+    const sY = startScaled.y;
+    const eX = endScaled.x;
+    const eY = endScaled.y;
+    const btn = (args.button || "left").toLowerCase().trim();
+    const dur = Number(args.duration || 200);
+    logCommand(`MOUSE_DRAG: from (${sX}, ${sY}) to (${eX}, ${eY})`);
     if (clickerExe) {
       try {
-        require("child_process").execSync(`"${clickerExe}" drag ${sX} ${sY} ${eX} ${eY}`, { timeout: 3000 });
-        response = { ok: true, result: `Dragged mouse from (${sX}, ${sY}) to (${eX}, ${eY}).` };
-      } catch {}
-    }
-    if (!response) {
-      response = { ok: true, result: `Mouse drag executed.` };
+        require("child_process").execFileSync(clickerExe, ["drag", String(sX), String(sY), String(eX), String(eY), btn, String(dur)], { encoding: "utf8", timeout: 4000 });
+        response = { ok: true, result: `Dragged mouse from (${sX}, ${sY}) to (${eX}, ${eY}).`, sX, sY, eX, eY };
+      } catch (err) {
+        logError(`clicker drag error: ${err.message}`);
+        response = { ok: false, error: `Drag failed: ${err.message}` };
+      }
+    } else {
+      response = { ok: false, error: "Clicker binary not found for drag action." };
     }
   } else if (["mouseScroll", "scrollMouse", "browserScroll", "desktopBrowserScroll"].includes(tool)) {
     const amount = Number(args.amount || args.lines || 120);
@@ -1063,7 +1124,7 @@ async function callDesktopAgent(tool, args = {}) {
     const clickerExe = getClickerExePath();
     if (clickerExe) {
       try {
-        require("child_process").execSync(`"${clickerExe}" scroll ${amount} ${dir}`, { timeout: 2000 });
+        require("child_process").execFileSync(clickerExe, ["scroll", String(amount), dir], { timeout: 2000 });
       } catch {}
     }
     response = { ok: true, result: `Scrolled page ${dir} by ${amount} units.` };
@@ -1082,12 +1143,13 @@ async function callDesktopAgent(tool, args = {}) {
     const clickerExe = getClickerExePath();
     if (clickerExe) {
       try {
-        require("child_process").execSync(`"${clickerExe}" key "${combo.replace(/"/g, '')}"`, { timeout: 2000 });
+        require("child_process").execFileSync(clickerExe, ["key", combo.replace(/"/g, '')], { timeout: 2000 });
         response = { ok: true, result: `Pressed key combination: ${combo}.` };
-      } catch {}
-    }
-    if (!response) {
-      response = { ok: true, result: `Key press: ${combo}.` };
+      } catch (err) {
+        response = { ok: false, error: `Key press failed: ${err.message}` };
+      }
+    } else {
+      response = { ok: false, error: "Clicker binary not available." };
     }
   }
 
@@ -1096,7 +1158,7 @@ async function callDesktopAgent(tool, args = {}) {
     const clickerExe = getClickerExePath();
     if (clickerExe) {
       try {
-        const out = require("child_process").execSync(`"${clickerExe}" volume up`, { encoding: "utf8", timeout: 3000 });
+        const out = require("child_process").execFileSync(clickerExe, ["volume", "up"], { encoding: "utf8", timeout: 3000 });
         const p = JSON.parse(out.trim());
         response = { ok: true, result: `Increased master volume to ${p.level}%.`, level: p.level };
       } catch {}
@@ -1104,14 +1166,16 @@ async function callDesktopAgent(tool, args = {}) {
     if (!response) {
       try {
         require("child_process").execSync(`powershell -NoProfile -Command "$wshell = New-Object -ComObject WScript.Shell; $wshell.SendKeys([char]175)"`, { timeout: 2000 });
-      } catch {}
-      response = { ok: true, result: "Increased master volume." };
+        response = { ok: true, result: "Increased master volume." };
+      } catch (e) {
+        response = { ok: false, error: `Volume up failed: ${e.message}` };
+      }
     }
   } else if (tool === "volumeDown") {
     const clickerExe = getClickerExePath();
     if (clickerExe) {
       try {
-        const out = require("child_process").execSync(`"${clickerExe}" volume down`, { encoding: "utf8", timeout: 3000 });
+        const out = require("child_process").execFileSync(clickerExe, ["volume", "down"], { encoding: "utf8", timeout: 3000 });
         const p = JSON.parse(out.trim());
         response = { ok: true, result: `Decreased master volume to ${p.level}%.`, level: p.level };
       } catch {}
@@ -1119,23 +1183,30 @@ async function callDesktopAgent(tool, args = {}) {
     if (!response) {
       try {
         require("child_process").execSync(`powershell -NoProfile -Command "$wshell = New-Object -ComObject WScript.Shell; $wshell.SendKeys([char]174)"`, { timeout: 2000 });
-      } catch {}
-      response = { ok: true, result: "Decreased master volume." };
+        response = { ok: true, result: "Decreased master volume." };
+      } catch (e) {
+        response = { ok: false, error: `Volume down failed: ${e.message}` };
+      }
     }
   } else if (tool === "setVolume") {
-    const level = Math.max(0, Math.min(100, Number(args.level || args.volume || 50)));
+    const level = Math.max(0, Math.min(100, Number(args.level ?? args.volume ?? 50)));
     const clickerExe = getClickerExePath();
     if (clickerExe) {
       try {
-        require("child_process").execSync(`"${clickerExe}" volume set ${level}`, { timeout: 3000 });
-      } catch {}
+        const out = require("child_process").execFileSync(clickerExe, ["volume", "set", String(level)], { encoding: "utf8", timeout: 3000 });
+        const p = JSON.parse(out.trim());
+        response = { ok: true, result: `Set master volume to ${p.level ?? level}%.`, level: p.level ?? level };
+      } catch (e) {
+        response = { ok: false, error: `Volume set failed: ${e.message}` };
+      }
+    } else {
+      response = { ok: false, error: "Clicker binary not found." };
     }
-    response = { ok: true, result: `Set master volume to ${level}%.`, level };
   } else if (tool === "muteToggle") {
     const clickerExe = getClickerExePath();
     if (clickerExe) {
       try {
-        const out = require("child_process").execSync(`"${clickerExe}" volume mute`, { encoding: "utf8", timeout: 3000 });
+        const out = require("child_process").execFileSync(clickerExe, ["volume", "mute"], { encoding: "utf8", timeout: 3000 });
         const p = JSON.parse(out.trim());
         response = { ok: true, result: `Audio master ${p.muted ? 'muted' : 'unmuted'}.`, muted: p.muted };
       } catch {}
@@ -1143,8 +1214,10 @@ async function callDesktopAgent(tool, args = {}) {
     if (!response) {
       try {
         require("child_process").execSync(`powershell -NoProfile -Command "$wshell = New-Object -ComObject WScript.Shell; $wshell.SendKeys([char]173)"`, { timeout: 2000 });
-      } catch {}
-      response = { ok: true, result: "Toggled audio mute." };
+        response = { ok: true, result: "Toggled audio mute." };
+      } catch (e) {
+        response = { ok: false, error: `Mute toggle failed: ${e.message}` };
+      }
     }
   }
 
@@ -1153,31 +1226,42 @@ async function callDesktopAgent(tool, args = {}) {
     const clickerExe = getClickerExePath();
     if (clickerExe) {
       try {
-        const out = require("child_process").execSync(`"${clickerExe}" brightness up`, { encoding: "utf8", timeout: 3000 });
+        const out = require("child_process").execFileSync(clickerExe, ["brightness", "up"], { encoding: "utf8", timeout: 3000 });
         const p = JSON.parse(out.trim());
         response = { ok: true, result: `Increased display brightness to ${p.level}%.`, level: p.level };
-      } catch {}
+      } catch (e) {
+        response = { ok: false, error: `Brightness up failed: ${e.message}` };
+      }
+    } else {
+      response = { ok: false, error: "Clicker binary not found." };
     }
-    if (!response) response = { ok: true, result: "Increased display brightness." };
   } else if (tool === "brightnessDown") {
     const clickerExe = getClickerExePath();
     if (clickerExe) {
       try {
-        const out = require("child_process").execSync(`"${clickerExe}" brightness down`, { encoding: "utf8", timeout: 3000 });
+        const out = require("child_process").execFileSync(clickerExe, ["brightness", "down"], { encoding: "utf8", timeout: 3000 });
         const p = JSON.parse(out.trim());
         response = { ok: true, result: `Decreased display brightness to ${p.level}%.`, level: p.level };
-      } catch {}
+      } catch (e) {
+        response = { ok: false, error: `Brightness down failed: ${e.message}` };
+      }
+    } else {
+      response = { ok: false, error: "Clicker binary not found." };
     }
-    if (!response) response = { ok: true, result: "Decreased display brightness." };
   } else if (tool === "setBrightness") {
-    const level = Math.max(0, Math.min(100, Number(args.level || args.brightness || 75)));
+    const level = Math.max(0, Math.min(100, Number(args.level ?? args.brightness ?? 75)));
     const clickerExe = getClickerExePath();
     if (clickerExe) {
       try {
-        require("child_process").execSync(`"${clickerExe}" brightness set ${level}`, { timeout: 3000 });
-      } catch {}
+        const out = require("child_process").execFileSync(clickerExe, ["brightness", "set", String(level)], { encoding: "utf8", timeout: 3000 });
+        const p = JSON.parse(out.trim());
+        response = { ok: true, result: `Set display brightness to ${p.level ?? level}%.`, level: p.level ?? level };
+      } catch (e) {
+        response = { ok: false, error: `Brightness set failed: ${e.message}` };
+      }
+    } else {
+      response = { ok: false, error: "Clicker binary not found." };
     }
-    response = { ok: true, result: `Set display brightness to ${level}%.`, level };
   }
 
   // 6. Clipboard Management
@@ -1185,7 +1269,7 @@ async function callDesktopAgent(tool, args = {}) {
     const clickerExe = getClickerExePath();
     if (clickerExe) {
       try {
-        const out = require("child_process").execSync(`"${clickerExe}" clipboard get`, { encoding: "utf8", timeout: 3000 });
+        const out = require("child_process").execFileSync(clickerExe, ["clipboard", "get"], { encoding: "utf8", timeout: 3000 });
         const p = JSON.parse(out.trim());
         response = { ok: true, text: p.text || "", result: `Clipboard content: "${(p.text || '').slice(0, 100)}"` };
       } catch {}
@@ -1201,7 +1285,7 @@ async function callDesktopAgent(tool, args = {}) {
   } else if (tool === "copySelected") {
     const clickerExe = getClickerExePath();
     if (clickerExe) {
-      try { require("child_process").execSync(`"${clickerExe}" key ctrl+c`, { timeout: 2000 }); } catch {}
+      try { require("child_process").execFileSync(clickerExe, ["key", "ctrl+c"], { timeout: 2000 }); } catch {}
     } else {
       try { require("child_process").execSync(`powershell -NoProfile -Command "$wshell = New-Object -ComObject WScript.Shell; $wshell.SendKeys('^c')"`, { timeout: 2000 }); } catch {}
     }
@@ -1209,21 +1293,22 @@ async function callDesktopAgent(tool, args = {}) {
   } else if (tool === "pasteClipboard") {
     if (args.text) {
       try {
-        const escaped = args.text.replace(/"/g, "`\"");
-        require("child_process").execSync(`powershell -NoProfile -Command "Set-Clipboard -Value \"${escaped}\""`, { timeout: 2000 });
+        const b64 = Buffer.from(args.text, "utf8").toString("base64");
+        const exePath = getClickerExePath();
+        if (exePath) {
+          require("child_process").execFileSync(exePath, ["clipboard", "set", "--b64", b64], { timeout: 2000 });
+        }
       } catch {}
     }
     const clickerExe = getClickerExePath();
     if (clickerExe) {
-      try { require("child_process").execSync(`"${clickerExe}" key ctrl+v`, { timeout: 2000 }); } catch {}
-    } else {
-      try { require("child_process").execSync(`powershell -NoProfile -Command "$wshell = New-Object -ComObject WScript.Shell; $wshell.SendKeys('^v')"`, { timeout: 2000 }); } catch {}
+      try { require("child_process").execFileSync(clickerExe, ["key", "ctrl+v"], { timeout: 2000 }); } catch {}
     }
     response = { ok: true, result: "Pasted clipboard content into active window." };
   } else if (tool === "clearClipboard") {
     const clickerExe = getClickerExePath();
     if (clickerExe) {
-      try { require("child_process").execSync(`"${clickerExe}" clipboard clear`, { timeout: 2000 }); } catch {}
+      try { require("child_process").execFileSync(clickerExe, ["clipboard", "clear"], { timeout: 2000 }); } catch {}
     }
     response = { ok: true, result: "Cleared clipboard." };
   }
@@ -1240,7 +1325,7 @@ async function callDesktopAgent(tool, args = {}) {
       result: `Power action '${act}' requested. Confirmation token generated: ${token}. Confirm to proceed.`
     };
   } else if (tool === "executePowerAction") {
-    const token = args.token || args.execute_token;
+    const token = args.token || args.confirmationToken || args.execute_token || "";
     const act = (args.action || "").toLowerCase();
     if (!token || !activePowerTokens.has(token)) {
       response = { ok: false, error: "Invalid or expired power confirmation token." };
@@ -1255,7 +1340,7 @@ async function callDesktopAgent(tool, args = {}) {
           try { require("child_process").exec("rundll32.exe user32.dll,LockWorkStation"); } catch {}
           response = { ok: true, result: "Workstation locked successfully." };
         } else if (actionToRun === "sleep") {
-          try { require("child_process").exec("rundll32.exe powrprof.dll,SetSuspendState 0,1,0"); } catch {}
+          try { require("child_process").exec("powrprof.dll,SetSuspendState 0,1,0"); } catch {}
           response = { ok: true, result: "System entered sleep state." };
         } else if (actionToRun === "restart") {
           try { require("child_process").exec("shutdown.exe /r /t 0"); } catch {}
@@ -1270,7 +1355,7 @@ async function callDesktopAgent(tool, args = {}) {
     }
   }
 
-  // 8. System Information
+  // 8. System Information & Screenshots
   else if (tool === "systemInfo") {
     const os = require("os");
     response = {
@@ -1344,41 +1429,116 @@ async function callDesktopAgent(tool, args = {}) {
     }
   } else if (tool === "desktopBrowserFillForm") {
     const fields = args.fields || args.formData || {};
-    let filled = 0;
     const clickerExe = getClickerExePath();
-    for (const [key, val] of Object.entries(fields)) {
-      nativeTypeText(String(val));
-      if (clickerExe) {
+    if (!clickerExe) {
+      response = { ok: false, error: "Clicker engine not found for form filling." };
+    } else {
+      let filled = 0;
+      for (const [key, val] of Object.entries(fields)) {
+        const typeRes = nativeTypeText(String(val));
+        if (!typeRes.ok) {
+          return { ok: false, error: `Failed typing form field "${key}": ${typeRes.error}` };
+        }
         try { require("child_process").execFileSync(clickerExe, ["key", "tab"], { timeout: 1000 }); } catch {}
+        filled++;
       }
-      filled++;
+      response = { ok: true, filled, result: `Filled ${filled} form fields into active browser window.` };
     }
-    response = { ok: true, filled, result: `Filled ${filled} form fields into active browser window.` };
-  } else if (tool === "desktopBrowserOpenTab") {
+  } else if (["desktopBrowserOpenTab", "browserOpenTab"].includes(tool)) {
     const clickerExe = getClickerExePath();
-    if (clickerExe) {
+    if (!clickerExe) {
+      response = { ok: false, error: "Clicker engine not found to open browser tab." };
+    } else {
+      try {
+        require("child_process").execFileSync(clickerExe, ["key", "ctrl+t"], { timeout: 2000 });
+        if (args.url) nativeOpenWebsite({ url: args.url });
+        response = { ok: true, result: "Opened new browser tab." };
+      } catch (err) {
+        response = { ok: false, error: `Failed to open browser tab: ${err.message}` };
+      }
+    }
+  } else if (["desktopBrowserCloseTab", "browserCloseTab"].includes(tool)) {
+    const clickerExe = getClickerExePath();
+    if (!clickerExe) {
+      response = { ok: false, error: "Clicker engine not found to close browser tab." };
+    } else {
+      try {
+        require("child_process").execFileSync(clickerExe, ["key", "ctrl+w"], { timeout: 2000 });
+        response = { ok: true, result: "Closed active browser tab." };
+      } catch (err) {
+        response = { ok: false, error: `Failed to close browser tab: ${err.message}` };
+      }
+    }
+  } else if (["desktopBrowserGoBack", "browserGoBack"].includes(tool)) {
+    const clickerExe = getClickerExePath();
+    if (!clickerExe) {
+      response = { ok: false, error: "Clicker engine not found to navigate browser back." };
+    } else {
+      try {
+        require("child_process").execFileSync(clickerExe, ["key", "alt+left"], { timeout: 2000 });
+        response = { ok: true, result: "Navigated back in browser history." };
+      } catch (err) {
+        response = { ok: false, error: `Failed to go back: ${err.message}` };
+      }
+    }
+  } else if (["desktopBrowserGoForward", "browserGoForward"].includes(tool)) {
+    const clickerExe = getClickerExePath();
+    if (!clickerExe) {
+      response = { ok: false, error: "Clicker engine not found to navigate browser forward." };
+    } else {
+      try {
+        require("child_process").execFileSync(clickerExe, ["key", "alt+right"], { timeout: 2000 });
+        response = { ok: true, result: "Navigated forward in browser history." };
+      } catch (err) {
+        response = { ok: false, error: `Failed to go forward: ${err.message}` };
+      }
+    }
+  } else if (tool === "browserTabAction") {
+    const action = (args.action || "new").toLowerCase().trim();
+    const clickerExe = getClickerExePath();
+    if (!clickerExe) {
+      response = { ok: false, error: "Clicker binary not found for browser tab action." };
+    } else if (action === "new" || action === "open") {
       try { require("child_process").execFileSync(clickerExe, ["key", "ctrl+t"], { timeout: 2000 }); } catch {}
-    }
-    if (args.url) nativeOpenWebsite({ url: args.url });
-    response = { ok: true, result: "Opened new browser tab." };
-  } else if (tool === "desktopBrowserCloseTab") {
-    const clickerExe = getClickerExePath();
-    if (clickerExe) {
+      if (args.url) nativeOpenWebsite({ url: args.url });
+      response = { ok: true, result: "Opened new browser tab." };
+    } else if (action === "close") {
       try { require("child_process").execFileSync(clickerExe, ["key", "ctrl+w"], { timeout: 2000 }); } catch {}
+      response = { ok: true, result: "Closed active browser tab." };
+    } else if (action === "next") {
+      try { require("child_process").execFileSync(clickerExe, ["key", "ctrl+tab"], { timeout: 2000 }); } catch {}
+      response = { ok: true, result: "Switched to next browser tab." };
+    } else if (action === "prev" || action === "previous") {
+      try { require("child_process").execFileSync(clickerExe, ["key", "ctrl+shift+tab"], { timeout: 2000 }); } catch {}
+      response = { ok: true, result: "Switched to previous browser tab." };
+    } else {
+      response = { ok: false, error: `Unsupported tab action: ${action}` };
     }
-    response = { ok: true, result: "Closed active browser tab." };
-  } else if (tool === "desktopBrowserGoBack") {
+  } else if (tool === "browserMediaControl") {
+    const action = (args.action || "play_pause").toLowerCase().trim();
     const clickerExe = getClickerExePath();
     if (clickerExe) {
-      try { require("child_process").execFileSync(clickerExe, ["key", "alt+left"], { timeout: 2000 }); } catch {}
+      if (action === "play" || action === "pause" || action === "play_pause" || action === "toggle") {
+        try { require("child_process").execFileSync(clickerExe, ["key", "mediaplaypause"], { timeout: 2000 }); } catch {}
+        response = { ok: true, result: "Toggled media playback (Play/Pause)." };
+      } else if (action === "next" || action === "skip") {
+        try { require("child_process").execFileSync(clickerExe, ["key", "medianext"], { timeout: 2000 }); } catch {}
+        response = { ok: true, result: "Skipped to next media track." };
+      } else if (action === "prev" || action === "previous") {
+        try { require("child_process").execFileSync(clickerExe, ["key", "mediaprev"], { timeout: 2000 }); } catch {}
+        response = { ok: true, result: "Returned to previous media track." };
+      } else if (action === "stop") {
+        try { require("child_process").execFileSync(clickerExe, ["key", "mediastop"], { timeout: 2000 }); } catch {}
+        response = { ok: true, result: "Stopped media playback." };
+      } else if (action === "mute" || action === "unmute") {
+        try { require("child_process").execFileSync(clickerExe, ["volume", "mute"], { timeout: 2000 }); } catch {}
+        response = { ok: true, result: "Toggled media mute." };
+      } else {
+        response = { ok: false, error: `Unknown media action: ${action}` };
+      }
+    } else {
+      response = { ok: false, error: "Clicker binary not found for media control." };
     }
-    response = { ok: true, result: "Navigated back in browser history." };
-  } else if (tool === "desktopBrowserGoForward") {
-    const clickerExe = getClickerExePath();
-    if (clickerExe) {
-      try { require("child_process").execFileSync(clickerExe, ["key", "alt+right"], { timeout: 2000 }); } catch {}
-    }
-    response = { ok: true, result: "Navigated forward in browser history." };
   }
 
   // 9. Browser Automation & Searches
@@ -1402,8 +1562,10 @@ async function callDesktopAgent(tool, args = {}) {
 
     if (!clickedPlaywright && (args.x !== undefined || args.y !== undefined)) {
       response = nativeMouseClick(args);
-    } else {
+    } else if (clickedPlaywright) {
       response = { ok: true, result: `Clicked: ${target || 'target element'}` };
+    } else {
+      response = { ok: false, error: "Browser click failed on element: " + (target || "unknown") };
     }
   } else if (["browserOpen", "desktopBrowserOpen", "openWebsite"].includes(tool)) {
     let url = args.url || (args.name ? `https://${args.name}.com` : "https://google.com");
@@ -1462,16 +1624,30 @@ async function callDesktopAgent(tool, args = {}) {
   // 10. File Operations & Developer Tools
   else if (["createProjectFolder", "writeCodeFile", "createFile", "readFile", "listFiles", "createPythonFile", "deleteFile", "renameFile", "moveFile", "openFolder", "searchFiles"].includes(tool)) {
     response = nativeDeveloperProjectTool(tool, args);
-  } else if (["runTerminalCommand", "executeCommand", "runPythonScript"].includes(tool)) {
-    const cmd = args.command || args.cmd || (tool === "runPythonScript" ? `python "${args.path}"` : "");
+  } else if (tool === "runPythonScript") {
+    const rawPath = args.path || args.script || args.filePath || "";
+    if (!rawPath) return { ok: false, error: "Script path parameter is required." };
+    const scriptPath = resolveUserPath(rawPath);
+    if (!fs.existsSync(scriptPath)) {
+      return { ok: false, error: `Python script not found: ${scriptPath}` };
+    }
+    try {
+      const output = require("child_process").execFileSync("python.exe", [scriptPath], { encoding: "utf8", timeout: 30000 });
+      response = { ok: true, stdout: output.trim(), result: `Executed python script ${scriptPath}.` };
+    } catch (err) {
+      response = { ok: false, error: err.message, stderr: err.stderr?.toString() || "" };
+    }
+  } else if (["runTerminalCommand", "executeCommand"].includes(tool)) {
+    const cmd = args.command || args.cmd || "";
     response = nativeRunTerminal(cmd);
   }
 
-  // 11. Fallback / Daemon Attempt
+  // 11. Fallback: Pre-call ensureDesktopAgent and call Python Daemon
   if (!response) {
+    await ensureDesktopAgent();
     try {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 3000);
+      const timer = setTimeout(() => controller.abort(), 4000);
       const res = await fetch(`${DESKTOP_AGENT_URL}/execute`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1483,11 +1659,13 @@ async function callDesktopAgent(tool, args = {}) {
         const data = await res.json();
         if (data.ok) response = data;
       }
-    } catch {}
+    } catch (e) {
+      logError(`desktop agent execute error: ${e.message}`);
+    }
   }
 
   if (!response) {
-    response = { ok: false, error: `Action ${tool} failed: no execution handler or desktop agent succeeded.` };
+    response = { ok: false, error: `Action ${tool} failed: execution handler or desktop agent returned an error.` };
   }
 
   lastToolExec = { name: tool + argsKey, time: now, result: response };
@@ -1497,6 +1675,23 @@ async function startServer() {
   const app = (0, import_express.default)();
   const PORT = 3e3;
   app.use(import_express.default.json());
+
+  app.get("/api/auth/token", (req, res) => {
+    res.json({ token: MYRAA_AUTH_TOKEN });
+  });
+
+  // Security: Require x-myraa-token on all POST/PUT/DELETE mutating endpoints
+  app.use((req, res, next) => {
+    if (req.method === "GET" || req.method === "OPTIONS" || req.path === "/api/auth/token") {
+      return next();
+    }
+    const tokenHeader = req.headers["x-myraa-token"] || req.headers["authorization"]?.replace("Bearer ", "");
+    if (!tokenHeader || tokenHeader !== MYRAA_AUTH_TOKEN) {
+      return res.status(401).json({ ok: false, error: "Unauthorized: Missing or invalid x-myraa-token header." });
+    }
+    next();
+  });
+
   app.get("/api/memories", async (req, res) => {
     try {
       const memories = await loadMemories();
@@ -1551,6 +1746,30 @@ async function startServer() {
   function saveSettingsFile(data) {
     fs3.writeFileSync(SETTINGS_FILE, JSON.stringify(data, null, 2), "utf-8");
   }
+  
+  app.get("/api/settings/wake-word", async (req, res) => {
+    try {
+      const s = await loadSettings();
+      res.json({ ok: true, wakeWordEnabled: Boolean(s.wakeWordEnabled), wakePhrase: s.wakePhrase || "hey myraa" });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
+  app.post("/api/settings/wake-word", async (req, res) => {
+    try {
+      const { enabled, phrase } = req.body;
+      const s = await loadSettings();
+      if (enabled !== undefined) s.wakeWordEnabled = Boolean(enabled);
+      if (phrase !== undefined) s.wakePhrase = String(phrase).trim();
+      await saveSettings(s);
+      logCommand(`WAKE_WORD_SETTINGS: enabled=${s.wakeWordEnabled} phrase="${s.wakePhrase}"`);
+      res.json({ ok: true, wakeWordEnabled: s.wakeWordEnabled, wakePhrase: s.wakePhrase });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
   app.get("/api/settings", async (_req, res) => {
     try {
       res.json(loadSettingsFile());
@@ -1610,6 +1829,29 @@ async function startServer() {
       res.status(500).json({ error: e?.message || "Failed to save API key." });
     }
   });
+  
+  app.post("/api/execute", async (req, res) => {
+    try {
+      const { tool, args } = req.body;
+      if (!tool) return res.status(400).json({ ok: false, error: "Tool name is required." });
+      const result = await callDesktopAgent(tool, args || {});
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  app.post("/api/command", async (req, res) => {
+    try {
+      const { command } = req.body;
+      if (!command) return res.status(400).json({ ok: false, error: "Command is required." });
+      const result = nativeRunTerminal(command);
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
   app.get("/api/agent-health", async (_req, res) => {
     try {
       const ctrl = new AbortController();
@@ -1908,11 +2150,18 @@ ${interceptorScript}`);
       res.status(500).json({ error: err.message, results: [] });
     }
   });
-  const server = import_http.default.createServer(app);
+    const server = import_http.default.createServer(app);
   const wss = new import_ws.WebSocketServer({ noServer: true });
   server.on("upgrade", (request, socket, head) => {
-    const pathname = new URL(request.url || "", `http://${request.headers.host}`).pathname;
-    if (pathname === "/live") {
+    const urlObj = new URL(request.url || "", `http://${request.headers.host || "127.0.0.1"}`);
+    if (urlObj.pathname === "/live") {
+      const token = urlObj.searchParams.get("token") || request.headers["x-myraa-token"];
+      if (!token || token !== MYRAA_AUTH_TOKEN) {
+        console.warn(`[Security] Rejected unauthorized WebSocket upgrade to /live from ${request.socket.remoteAddress}`);
+        socket.write("HTTP/1.1 401 Unauthorized\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nUnauthorized: Missing or invalid token\r\n");
+        socket.destroy();
+        return;
+      }
       wss.handleUpgrade(request, socket, head, (ws) => {
         wss.emit("connection", ws, request);
       });
@@ -2655,13 +2904,19 @@ ${interceptorScript}`);
     app.use("/assets", import_express.default.static(import_path2.default.join(process.cwd(), "assets")));
   }
 
-  app.get("*", (req, res, next) => {
+    app.get("*", (req, res, next) => {
     if (req.path.startsWith("/api") || req.path.startsWith("/live") || req.path.startsWith("/assets/")) {
       return next();
     }
     const indexPath = import_path2.default.join(distPath, "index.html");
     if (import_fs.default.existsSync(indexPath)) {
-      res.sendFile(indexPath);
+      let html = import_fs.default.readFileSync(indexPath, "utf8");
+      const injectScript = `<script>window.__MYRAA_TOKEN__="${MYRAA_AUTH_TOKEN}";</script>`;
+      if (!html.includes("__MYRAA_TOKEN__")) {
+        html = html.replace("<head>", "<head>" + injectScript);
+      }
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.send(html);
     } else {
       next();
     }
@@ -2669,7 +2924,7 @@ ${interceptorScript}`);
   server.listen(PORT, "127.0.0.1", () => {
     logStartup(`MYRAA V2 server started on http://localhost:${PORT}`);
     console.log(`[Server] Running on http://localhost:${PORT}`);
-    ensureDesktopAgent().catch(() => {});
+    // Desktop agent is verified on demand before calls
     ensureLocalAgent().catch(() => {});
   });
 }

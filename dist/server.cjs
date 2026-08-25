@@ -673,69 +673,39 @@ function getClickerExePath() {
 function nativeOpenApp(name) {
   if (!name) return { ok: false, error: "Application name is required" };
   const trimmed = name.trim();
-  logCommand("OPEN_APP: " + name);
+  logCommand("OPEN_APP: " + trimmed);
 
-  if (process.platform === "darwin") {
+  const exePath = getClickerExePath();
+  if (exePath) {
     try {
-      require("child_process").exec('open -a "' + name + '" || open "' + name + '"');
-      return { ok: true, result: "Opened " + name + " on macOS." };
-    } catch (e) {
-      return { ok: false, error: "Could not open " + name + " on macOS: " + e.message };
-    }
-  }
-
-  if (process.platform === "linux") {
-    try {
-      require("child_process").exec('xdg-open "' + trimmed + '" || ' + trimmed + ' &');
-      return { ok: true, result: "Launched " + name + " on Linux." };
-    } catch (e) {
-      return { ok: false, error: "Could not launch " + name + " on Linux: " + e.message };
-    }
-  }
-
-  // Windows platform: prioritize native clicker.exe with Win32 SetForegroundWindow & AttachThreadInput
-  const clickerExe = getClickerExePath();
-  if (clickerExe) {
-    try {
-      const cleanName = trimmed.replace(/"/g, '');
-      const out = require("child_process").execSync(`"${clickerExe}" launch "${cleanName}"`, { encoding: "utf8", timeout: 6000 });
-      if (out && (out.includes('"success":true') || out.includes('status'))) {
-        try {
-          const parsed = JSON.parse(out.trim());
-          return { ok: true, result: (parsed.title || name) + " opened in the foreground.", ...parsed };
-        } catch {
-          return { ok: true, result: name + " opened in the foreground." };
-        }
+      const out = require("child_process").execFileSync(exePath, ["launch", trimmed], { encoding: "utf8", timeout: 6000 });
+      const p = JSON.parse(out.trim());
+      if (p.success) {
+        return { ok: true, result: (p.title || trimmed) + " opened in the foreground.", ...p };
       }
-    } catch (err) {
-      console.warn("clicker launch warn:", err.message);
+    } catch (e) {
+      logError("clicker launch error: " + e.message);
     }
   }
 
   const known = {
     "notepad": { exe: "notepad.exe", title: "Notepad" },
-    "notes": { exe: "notepad.exe", title: "Notepad" },
-    "calc": { exe: "calc.exe", title: "Calculator" },
     "calculator": { exe: "calc.exe", title: "Calculator" },
-    "chrome": { exe: "chrome.exe", title: "Chrome" },
-    "google chrome": { exe: "chrome.exe", title: "Chrome" },
-    "browser": { exe: "chrome.exe", title: "Chrome" },
-    "edge": { exe: "msedge.exe", title: "Edge" },
-    "microsoft edge": { exe: "msedge.exe", title: "Edge" },
-    "explorer": { exe: "explorer.exe", title: "File Explorer" },
-    "files": { exe: "explorer.exe", title: "File Explorer" },
-    "file explorer": { exe: "explorer.exe", title: "File Explorer" },
-    "cmd": { exe: "cmd.exe", title: "Command Prompt" },
+    "calc": { exe: "calc.exe", title: "Calculator" },
     "command prompt": { exe: "cmd.exe", title: "Command Prompt" },
-    "powershell": { exe: "powershell.exe", title: "PowerShell" },
+    "cmd": { exe: "cmd.exe", title: "Command Prompt" },
     "terminal": { exe: "wt.exe", title: "Terminal" },
+    "powershell": { exe: "powershell.exe", title: "Windows PowerShell" },
+    "file explorer": { exe: "explorer.exe", title: "File Explorer" },
+    "explorer": { exe: "explorer.exe", title: "File Explorer" },
     "paint": { exe: "mspaint.exe", title: "Paint" },
-    "vscode": { exe: "code", title: "Visual Studio Code" },
-    "code": { exe: "code", title: "Visual Studio Code" },
-    "visual studio code": { exe: "code", title: "Visual Studio Code" },
-    "cursor": { exe: "cursor", title: "Cursor" },
-    "antigravity": { exe: "antigravity", title: "Antigravity" },
-    "spotify": { exe: "spotify", title: "Spotify" },
+    "chrome": { exe: "chrome.exe", title: "Google Chrome" },
+    "google chrome": { exe: "chrome.exe", title: "Google Chrome" },
+    "edge": { exe: "msedge.exe", title: "Microsoft Edge" },
+    "microsoft edge": { exe: "msedge.exe", title: "Microsoft Edge" },
+    "vscode": { exe: "code.cmd", title: "Visual Studio Code" },
+    "vs code": { exe: "code.cmd", title: "Visual Studio Code" },
+    "visual studio code": { exe: "code.cmd", title: "Visual Studio Code" },
     "discord": { exe: "discord", title: "Discord" },
     "telegram": { exe: "telegram", title: "Telegram" },
     "task manager": { exe: "taskmgr.exe", title: "Task Manager" },
@@ -749,17 +719,22 @@ function nativeOpenApp(name) {
   const targetExe = appInfo ? appInfo.exe : trimmed;
   const targetTitle = appInfo ? appInfo.title : name;
 
+  const b64Target = Buffer.from(targetExe, "utf8").toString("base64");
+  const b64Title = Buffer.from(targetTitle, "utf8").toString("base64");
+  const b64Name = Buffer.from(trimmed, "utf8").toString("base64");
+
   const ps = `
-    $target = "${targetExe}";
-    $title = "${targetTitle}";
+    $target = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('${b64Target}'));
+    $title = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('${b64Title}'));
+    $name = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('${b64Name}'));
     if ($target -like "start *") {
       Invoke-Expression $target;
     } else {
       $p = Start-Process -FilePath $target -PassThru -WindowStyle Normal -ErrorAction SilentlyContinue;
       if (-not $p) {
-        $app = Get-StartApps | Where-Object { $_.Name -like "*${name}*" } | Select-Object -First 1;
+        $app = Get-StartApps | Where-Object { $_.Name -like "*$name*" } | Select-Object -First 1;
         if ($app) {
-          Start-Process "shell:AppsFolder\\$($app.AppID)" -WindowStyle Normal;
+          Start-Process "shell:AppsFolder\$($app.AppID)" -WindowStyle Normal;
         } else {
           Start-Process $target -WindowStyle Normal;
         }
@@ -772,14 +747,14 @@ function nativeOpenApp(name) {
   `;
 
   try {
-    require("child_process").execSync(`powershell -NoProfile -ExecutionPolicy Bypass -Command "${ps.replace(/\n/g, " ")}"`, { timeout: 8000 });
-    return { ok: true, result: name + " opened in the foreground." };
+    require("child_process").execFileSync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps.replace(/\n/g, " ")], { timeout: 8000 });
+    return { ok: true, result: trimmed + " opened in the foreground." };
   } catch (err) {
     try {
-      require("child_process").exec(`start "" "${targetExe}"`, { shell: "cmd.exe" });
-      return { ok: true, result: name + " launched." };
+      require("child_process").execFile("explorer.exe", [targetExe]);
+      return { ok: true, result: trimmed + " launched via Explorer." };
     } catch (e2) {
-      return { ok: false, error: "Could not launch " + name + ": " + err.message };
+      return { ok: false, error: "Could not launch " + trimmed + ": " + err.message };
     }
   }
 }
@@ -965,14 +940,16 @@ function nativeDeveloperProjectTool(action, args = {}) {
     if (action === "searchFiles") {
       const rawPath = args.folder || args.dirPath || args.path || args.directory || process.cwd();
       const dirPath = resolveUserPath(rawPath);
-      const query = (args.query || args.pattern || "").toLowerCase();
+      const query = (args.query || args.pattern || args.name || "").toLowerCase();
       const ext = (args.extension || "").toLowerCase().replace(/^\./, "");
+      const limit = Math.max(1, Math.min(200, Number(args.limit || 50)));
       const results = [];
       function walk(cur, depth = 0) {
-        if (depth > 4 || results.length > 50) return;
+        if (depth > 4 || results.length >= limit) return;
         try {
           const items = fs.readdirSync(cur, { withFileTypes: true });
           for (const item of items) {
+            if (results.length >= limit) break;
             const matchesQuery = !query || item.name.toLowerCase().includes(query);
             const matchesExt = !ext || item.name.toLowerCase().endsWith("." + ext);
             if (matchesQuery && matchesExt && !item.isDirectory()) {
@@ -1014,25 +991,34 @@ async function callDesktopAgent(tool, args = {}) {
     const procName = args.name || args.application || args.appName || "";
     if (!procName) return { ok: false, error: "Application name is required to close." };
     if (process.platform === "win32") {
-      let closed = false;
+      let clickerSuccess = false;
       const clickerExe = getClickerExePath();
       if (clickerExe) {
         try {
-          require("child_process").execFileSync(clickerExe, ["window", "close", procName], { timeout: 3000 });
-          closed = true;
+          const out = require("child_process").execFileSync(clickerExe, ["window", "close", procName], { encoding: "utf8", timeout: 3000 });
+          const p = JSON.parse(out.trim());
+          if (p.success) clickerSuccess = true;
         } catch {}
       }
+      
+      let taskkillSuccess = false;
+      let taskkillError = "";
       try {
         const target = procName.endsWith(".exe") ? procName : procName + ".exe";
-        require("child_process").execSync(`taskkill /F /IM "${target}"`, { stdio: "ignore", timeout: 3000 });
-        closed = true;
-      } catch (e) {
-        if (!closed) {
-          response = { ok: false, error: `Process "${procName}" could not be closed: ${e.message}` };
+        const out = require("child_process").execSync(`taskkill /F /IM "${target}" 2>&1`, { encoding: "utf8", timeout: 3000 });
+        if (out.includes("SUCCESS:") || out.includes("PID")) {
+          taskkillSuccess = true;
+        } else if (out.includes("ERROR:") || out.includes("not found")) {
+          taskkillError = out.trim();
         }
+      } catch (e) {
+        taskkillError = (e.stdout ? e.stdout.toString() : e.message).trim();
       }
-      if (!response) {
+
+      if (clickerSuccess || taskkillSuccess) {
         response = { ok: true, result: `Closed application ${procName}.` };
+      } else {
+        response = { ok: false, error: `Could not close application "${procName}": ${taskkillError || "Process not running or not found."}` };
       }
     } else {
       response = { ok: true, result: `Close requested for ${procName}.` };
@@ -1354,7 +1340,7 @@ async function callDesktopAgent(tool, args = {}) {
           try { require("child_process").exec("rundll32.exe user32.dll,LockWorkStation"); } catch {}
           response = { ok: true, result: "Workstation locked successfully." };
         } else if (actionToRun === "sleep") {
-          try { require("child_process").exec("rundll32.exe powrprof.dll,SetSuspendState 0,1,0"); } catch {}
+          try { require("child_process").exec("powrprof.dll,SetSuspendState 0,1,0"); } catch {}
           response = { ok: true, result: "System entered sleep state." };
         } else if (actionToRun === "restart") {
           try { require("child_process").exec("shutdown.exe /r /t 0"); } catch {}
@@ -1443,91 +1429,117 @@ async function callDesktopAgent(tool, args = {}) {
     }
   } else if (tool === "desktopBrowserFillForm") {
     const fields = args.fields || args.formData || {};
-    let filled = 0;
     const clickerExe = getClickerExePath();
-    for (const [key, val] of Object.entries(fields)) {
-      nativeTypeText(String(val));
-      if (clickerExe) {
+    if (!clickerExe) {
+      response = { ok: false, error: "Clicker engine not found for form filling." };
+    } else {
+      let filled = 0;
+      for (const [key, val] of Object.entries(fields)) {
+        const typeRes = nativeTypeText(String(val));
+        if (!typeRes.ok) {
+          return { ok: false, error: `Failed typing form field "${key}": ${typeRes.error}` };
+        }
         try { require("child_process").execFileSync(clickerExe, ["key", "tab"], { timeout: 1000 }); } catch {}
+        filled++;
       }
-      filled++;
+      response = { ok: true, filled, result: `Filled ${filled} form fields into active browser window.` };
     }
-    response = { ok: true, filled, result: `Filled ${filled} form fields into active browser window.` };
   } else if (["desktopBrowserOpenTab", "browserOpenTab"].includes(tool)) {
     const clickerExe = getClickerExePath();
-    if (clickerExe) {
-      try { require("child_process").execFileSync(clickerExe, ["key", "ctrl+t"], { timeout: 2000 }); } catch {}
+    if (!clickerExe) {
+      response = { ok: false, error: "Clicker engine not found to open browser tab." };
+    } else {
+      try {
+        require("child_process").execFileSync(clickerExe, ["key", "ctrl+t"], { timeout: 2000 });
+        if (args.url) nativeOpenWebsite({ url: args.url });
+        response = { ok: true, result: "Opened new browser tab." };
+      } catch (err) {
+        response = { ok: false, error: `Failed to open browser tab: ${err.message}` };
+      }
     }
-    if (args.url) nativeOpenWebsite({ url: args.url });
-    response = { ok: true, result: "Opened new browser tab." };
   } else if (["desktopBrowserCloseTab", "browserCloseTab"].includes(tool)) {
     const clickerExe = getClickerExePath();
-    if (clickerExe) {
-      try { require("child_process").execFileSync(clickerExe, ["key", "ctrl+w"], { timeout: 2000 }); } catch {}
+    if (!clickerExe) {
+      response = { ok: false, error: "Clicker engine not found to close browser tab." };
+    } else {
+      try {
+        require("child_process").execFileSync(clickerExe, ["key", "ctrl+w"], { timeout: 2000 });
+        response = { ok: true, result: "Closed active browser tab." };
+      } catch (err) {
+        response = { ok: false, error: `Failed to close browser tab: ${err.message}` };
+      }
     }
-    response = { ok: true, result: "Closed active browser tab." };
   } else if (["desktopBrowserGoBack", "browserGoBack"].includes(tool)) {
     const clickerExe = getClickerExePath();
-    if (clickerExe) {
-      try { require("child_process").execFileSync(clickerExe, ["key", "alt+left"], { timeout: 2000 }); } catch {}
+    if (!clickerExe) {
+      response = { ok: false, error: "Clicker engine not found to navigate browser back." };
+    } else {
+      try {
+        require("child_process").execFileSync(clickerExe, ["key", "alt+left"], { timeout: 2000 });
+        response = { ok: true, result: "Navigated back in browser history." };
+      } catch (err) {
+        response = { ok: false, error: `Failed to go back: ${err.message}` };
+      }
     }
-    try {
-      await fetch("http://127.0.0.1:3001/api/action", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "back" })
-      });
-    } catch {}
-    response = { ok: true, result: "Navigated back in browser history." };
   } else if (["desktopBrowserGoForward", "browserGoForward"].includes(tool)) {
     const clickerExe = getClickerExePath();
-    if (clickerExe) {
-      try { require("child_process").execFileSync(clickerExe, ["key", "alt+right"], { timeout: 2000 }); } catch {}
+    if (!clickerExe) {
+      response = { ok: false, error: "Clicker engine not found to navigate browser forward." };
+    } else {
+      try {
+        require("child_process").execFileSync(clickerExe, ["key", "alt+right"], { timeout: 2000 });
+        response = { ok: true, result: "Navigated forward in browser history." };
+      } catch (err) {
+        response = { ok: false, error: `Failed to go forward: ${err.message}` };
+      }
     }
-    response = { ok: true, result: "Navigated forward in browser history." };
   } else if (tool === "browserTabAction") {
     const action = (args.action || "new").toLowerCase().trim();
     const clickerExe = getClickerExePath();
-    if (action === "new" || action === "open") {
-      if (clickerExe) {
-        try { require("child_process").execFileSync(clickerExe, ["key", "ctrl+t"], { timeout: 2000 }); } catch {}
-      }
+    if (!clickerExe) {
+      response = { ok: false, error: "Clicker binary not found for browser tab action." };
+    } else if (action === "new" || action === "open") {
+      try { require("child_process").execFileSync(clickerExe, ["key", "ctrl+t"], { timeout: 2000 }); } catch {}
       if (args.url) nativeOpenWebsite({ url: args.url });
       response = { ok: true, result: "Opened new browser tab." };
     } else if (action === "close") {
-      if (clickerExe) {
-        try { require("child_process").execFileSync(clickerExe, ["key", "ctrl+w"], { timeout: 2000 }); } catch {}
-      }
+      try { require("child_process").execFileSync(clickerExe, ["key", "ctrl+w"], { timeout: 2000 }); } catch {}
       response = { ok: true, result: "Closed active browser tab." };
     } else if (action === "next") {
-      if (clickerExe) {
-        try { require("child_process").execFileSync(clickerExe, ["key", "ctrl+tab"], { timeout: 2000 }); } catch {}
-      }
+      try { require("child_process").execFileSync(clickerExe, ["key", "ctrl+tab"], { timeout: 2000 }); } catch {}
       response = { ok: true, result: "Switched to next browser tab." };
     } else if (action === "prev" || action === "previous") {
-      if (clickerExe) {
-        try { require("child_process").execFileSync(clickerExe, ["key", "ctrl+shift+tab"], { timeout: 2000 }); } catch {}
-      }
+      try { require("child_process").execFileSync(clickerExe, ["key", "ctrl+shift+tab"], { timeout: 2000 }); } catch {}
       response = { ok: true, result: "Switched to previous browser tab." };
     } else {
       response = { ok: false, error: `Unsupported tab action: ${action}` };
     }
-  } else if (tool === "browserMediaControl") {
+    } else if (tool === "browserMediaControl") {
     const action = (args.action || "play_pause").toLowerCase().trim();
     const clickerExe = getClickerExePath();
     if (clickerExe) {
-      if (action === "play" || action === "pause" || action === "play_pause" || action === "toggle") {
+      if (["play", "pause", "play_pause", "toggle"].includes(action)) {
         try { require("child_process").execFileSync(clickerExe, ["key", "mediaplaypause"], { timeout: 2000 }); } catch {}
         response = { ok: true, result: "Toggled media playback (Play/Pause)." };
-      } else if (action === "next") {
+      } else if (["next", "skip"].includes(action)) {
         try { require("child_process").execFileSync(clickerExe, ["key", "medianext"], { timeout: 2000 }); } catch {}
         response = { ok: true, result: "Skipped to next media track." };
-      } else if (action === "prev" || action === "previous") {
+      } else if (["prev", "previous"].includes(action)) {
         try { require("child_process").execFileSync(clickerExe, ["key", "mediaprev"], { timeout: 2000 }); } catch {}
         response = { ok: true, result: "Returned to previous media track." };
       } else if (action === "stop") {
         try { require("child_process").execFileSync(clickerExe, ["key", "mediastop"], { timeout: 2000 }); } catch {}
         response = { ok: true, result: "Stopped media playback." };
+      } else if (["mute", "unmute"].includes(action)) {
+        try { require("child_process").execFileSync(clickerExe, ["volume", "mute"], { timeout: 2000 }); } catch {}
+        response = { ok: true, result: "Toggled audio mute state." };
+      } else if (action === "volume") {
+        const val = Math.max(0, Math.min(100, Number(args.value ?? 50)));
+        try { require("child_process").execFileSync(clickerExe, ["volume", "set", String(val)], { timeout: 2000 }); } catch {}
+        response = { ok: true, result: `Set volume to ${val}%.` };
+      } else if (["fullscreen", "exit_fullscreen"].includes(action)) {
+        try { require("child_process").execFileSync(clickerExe, ["key", "f"], { timeout: 2000 }); } catch {}
+        response = { ok: true, result: "Toggled browser video fullscreen." };
       } else {
         response = { ok: false, error: `Unknown media action: ${action}` };
       }
@@ -1619,8 +1631,21 @@ async function callDesktopAgent(tool, args = {}) {
   // 10. File Operations & Developer Tools
   else if (["createProjectFolder", "writeCodeFile", "createFile", "readFile", "listFiles", "createPythonFile", "deleteFile", "renameFile", "moveFile", "openFolder", "searchFiles"].includes(tool)) {
     response = nativeDeveloperProjectTool(tool, args);
-  } else if (["runTerminalCommand", "executeCommand", "runPythonScript"].includes(tool)) {
-    const cmd = args.command || args.cmd || (tool === "runPythonScript" ? `python "${args.path}"` : "");
+  } else if (tool === "runPythonScript") {
+    const rawPath = args.path || args.script || args.filePath || "";
+    if (!rawPath) return { ok: false, error: "Script path parameter is required." };
+    const scriptPath = resolveUserPath(rawPath);
+    if (!fs.existsSync(scriptPath)) {
+      return { ok: false, error: `Python script not found: ${scriptPath}` };
+    }
+    try {
+      const output = require("child_process").execFileSync("python.exe", [scriptPath], { encoding: "utf8", timeout: 30000 });
+      response = { ok: true, stdout: output.trim(), result: `Executed python script ${scriptPath}.` };
+    } catch (err) {
+      response = { ok: false, error: err.message, stderr: err.stderr?.toString() || "" };
+    }
+  } else if (["runTerminalCommand", "executeCommand"].includes(tool)) {
+    const cmd = args.command || args.cmd || "";
     response = nativeRunTerminal(cmd);
   }
 
@@ -1728,6 +1753,31 @@ async function startServer() {
   function saveSettingsFile(data) {
     fs3.writeFileSync(SETTINGS_FILE, JSON.stringify(data, null, 2), "utf-8");
   }
+  
+    app.get("/api/settings/wake-word", async (req, res) => {
+    try {
+      const s = loadSettingsFile();
+      res.json({ ok: true, wakeWordEnabled: Boolean(s.wakeWordEnabled), wakePhrase: s.wakePhrase || "hey myraa" });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
+  app.post("/api/settings/wake-word", async (req, res) => {
+    try {
+      const { enabled, phrase } = req.body;
+      const current = loadSettingsFile();
+      const next = { ...current };
+      if (enabled !== undefined) next.wakeWordEnabled = Boolean(enabled);
+      if (phrase !== undefined) next.wakePhrase = String(phrase).trim();
+      saveSettingsFile(next);
+      logCommand(`WAKE_WORD_SETTINGS: enabled=${next.wakeWordEnabled} phrase="${next.wakePhrase}"`);
+      res.json({ ok: true, wakeWordEnabled: next.wakeWordEnabled, wakePhrase: next.wakePhrase });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
   app.get("/api/settings", async (_req, res) => {
     try {
       res.json(loadSettingsFile());
@@ -1843,200 +1893,13 @@ async function startServer() {
       res.status(500).json({ error: e.message });
     }
   });
-  app.get("/api/proxy", async (req, res) => {
-    try {
-      const url = req.query.url;
-      if (!url) {
-        return res.status(400).json({ error: "Missing 'url' parameter." });
-      }
-      console.log(`[Proxy Scraper] Fetching external content for: ${url}`);
-      const response = await fetch(url, {
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
-        }
-      });
-      if (!response.ok) {
-        throw new Error(`Scraper failed to load page: status ${response.status}`);
-      }
-      const html = await response.text();
-      const titleMatch = html.match(/<title>(.*?)<\/title>/i);
-      const title = titleMatch ? titleMatch[1].trim() : "";
-      const headings = [];
-      const headingMatches = html.matchAll(/<h([1-3])\b[^>]*>(.*?)<\/h\1>/gi);
-      for (const match of headingMatches) {
-        const text = match[2].replace(/<[^>]*>/g, "").trim();
-        if (text && text.length > 3 && text.length < 120 && !headings.includes(text)) {
-          headings.push(text);
-        }
-      }
-      const links = [];
-      const linkMatches = html.matchAll(/<a\b[^>]*\bhref=["']([^"']+)["'][^>]*>(.*?)<\/a>/gi);
-      for (const match of linkMatches) {
-        let href = match[1].trim();
-        const text = match[2].replace(/<[^>]*>/g, "").trim();
-        if (text && text.length > 2 && text.length < 100) {
-          if (href.startsWith("/")) {
-            try {
-              const u = new URL(url);
-              href = `${u.protocol}//${u.host}${href}`;
-            } catch {
-            }
-          }
-          if (href.startsWith("http://") || href.startsWith("https://")) {
-            links.push({ text, href });
-          }
-        }
-      }
-      const paragraphs = [];
-      const paragraphMatches = html.matchAll(/<p\b[^>]*>(.*?)<\/p>/gi);
-      for (const match of paragraphMatches) {
-        const text = match[1].replace(/<[^>]*>/g, "").trim();
-        if (text && text.length > 25 && text.length < 600 && !paragraphs.includes(text)) {
-          paragraphs.push(text);
-        }
-      }
-      const buttons = [];
-      const buttonMatches = html.matchAll(/<button\b[^>]*>(.*?)<\/button>/gi);
-      for (const match of buttonMatches) {
-        const text = match[1].replace(/<[^>]*>/g, "").trim();
-        if (text && text.length > 1 && text.length < 60 && !buttons.includes(text)) {
-          buttons.push(text);
-        }
-      }
-      res.json({
-        url,
-        title,
-        headings: headings.slice(0, 15),
-        links: links.filter((l) => !l.href.includes("javascript:")).slice(0, 30),
-        buttons: buttons.slice(0, 15),
-        paragraphs: paragraphs.slice(0, 12)
-      });
-    } catch (err) {
-      console.error(`[Proxy Scraper] Error fetching ${req.query.url}:`, err.message);
-      res.status(500).json({ error: `Scraper error: ${err.message}` });
-    }
+  app.get("/api/proxy", (req, res) => {
+    res.status(403).json({ error: "Proxy endpoint disabled for security." });
   });
-  app.get("/api/web-proxy", async (req, res) => {
-    let targetUrl = "";
-    try {
-      const urlParam = req.query.url;
-      if (!urlParam) {
-        return res.status(400).send("Myraa Web Proxy Error: Missing target 'url' parameter");
-      }
-      targetUrl = urlParam.trim();
-      if (targetUrl.startsWith("/")) {
-        return res.status(400).send(`Myraa Web Proxy Error: Relative paths are not supported directly (${targetUrl}).`);
-      }
-      try {
-        if (!targetUrl.startsWith("http://") && !targetUrl.startsWith("https://")) {
-          targetUrl = "https://" + targetUrl;
-        }
-        const parsed = new URL(targetUrl);
-        if (!parsed.hostname || !parsed.hostname.includes(".")) {
-          throw new Error("Missing or invalid domain name extension (e.g. .com, .org, .net).");
-        }
-      } catch (err) {
-        return res.status(400).send(`Myraa Web Proxy Error: Invalid URL specified: "${urlParam}". Make sure you enter a valid domain name.`);
-      }
-      console.log(`[Web Proxy] Routing connection through proxy: ${targetUrl}`);
-      let response;
-      try {
-        response = await fetch(targetUrl, {
-          headers: {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
-          }
-        });
-      } catch (fetchErr) {
-        console.warn(`[Web Proxy Failed Fetch] Target: ${targetUrl} Error:`, fetchErr.message);
-        return res.status(502).send(`Myraa Web Proxy Error: Unable to fetch the website "${targetUrl}". The site might be offline, or the URL address is spelled incorrectly. Details: ${fetchErr.message}`);
-      }
-      if (!response.ok) {
-        return res.status(response.status).send(`Myraa Web Proxy Error: Failed loading remote website. Server returned status: ${response.status} (${response.statusText})`);
-      }
-      const contentType = response.headers.get("content-type") || "";
-      if (!contentType.includes("text/html")) {
-        const arrayBuffer = await response.arrayBuffer();
-        res.setHeader("Content-Type", contentType);
-        return res.send(Buffer.from(arrayBuffer));
-      }
-      let htmlContents = await response.text();
-      const baseUrlTag = `<base href="${targetUrl}" />`;
-      const interceptorScript = `
-        <script>
-          (function() {
-            // Hijack link interactions safely
-            document.addEventListener('click', function(e) {
-              var anchor = e.target.closest('a');
-              if (anchor) {
-                var href = anchor.getAttribute('href');
-                if (href && !href.startsWith('#') && !href.startsWith('javascript:')) {
-                  e.preventDefault();
-                  try {
-                    var resolvedUrl = new URL(href, window.location.href).href;
-                    window.parent.postMessage({ type: 'NAVIGATE', url: resolvedUrl }, '*');
-                  } catch (err) {
-                    console.error("[Proxy Interceptor] Failed resolving link:", err);
-                  }
-                }
-              }
-            }, true);
-
-            // Hijack search form submits
-            document.addEventListener('submit', function(e) {
-              var form = e.target;
-              if (form) {
-                e.preventDefault();
-                try {
-                  var formData = new FormData(form);
-                  var params = new URLSearchParams();
-                  formData.forEach(function(value, key) {
-                    if (typeof value === 'string') {
-                      params.append(key, value);
-                    }
-                  });
-                  var actionAttr = form.getAttribute('action') || '';
-                  var actionUrl = new URL(actionAttr, window.location.href).href;
-                  if (form.method.toLowerCase() === 'get') {
-                    actionUrl += (actionUrl.indexOf('?') !== -1 ? '&' : '?') + params.toString();
-                  }
-                  window.parent.postMessage({ type: 'NAVIGATE', url: actionUrl }, '*');
-                } catch (err) {
-                  console.error("[Proxy Interceptor] Failed submitting form:", err);
-                }
-              }
-            }, true);
-
-            // Neutralize parent context locks (frame-busters)
-            window.alert = function(msg) { console.log("[Myraa Browser alert bypassed]:", msg); };
-            window.confirm = function(msg) { console.log("[Myraa Browser confirm bypassed]:", msg); return true; };
-            window.open = function(url) { window.parent.postMessage({ type: 'NAVIGATE', url: url }, '*'); return null; };
-          })();
-        </script>
-      `;
-      if (htmlContents.includes("<head>")) {
-        htmlContents = htmlContents.replace("<head>", `<head>
-${baseUrlTag}
-${interceptorScript}`);
-      } else if (htmlContents.includes("<HEAD>")) {
-        htmlContents = htmlContents.replace("<HEAD>", `<HEAD>
-${baseUrlTag}
-${interceptorScript}`);
-      } else {
-        htmlContents = baseUrlTag + "\n" + interceptorScript + "\n" + htmlContents;
-      }
-      res.setHeader("Content-Type", "text/html");
-      res.setHeader("X-Myraa-Proxied", "true");
-      res.removeHeader("X-Frame-Options");
-      res.removeHeader("Content-Security-Policy");
-      res.removeHeader("content-security-policy");
-      res.removeHeader("x-frame-options");
-      res.status(200).send(htmlContents);
-    } catch (e) {
-      console.warn("[Web Proxy Exception] Handled internal error:", e.message);
-      res.status(500).send(`Myraa Web Proxy Error: Internal error occurred proxying URL "${targetUrl || "unknown"}". Details: ${e.message}`);
-    }
+  app.get("/api/web-proxy", (req, res) => {
+    res.status(403).send("Web proxy endpoint disabled for security.");
   });
+
   app.get("/api/youtube-search", async (req, res) => {
     try {
       const query = req.query.q;
@@ -2108,11 +1971,18 @@ ${interceptorScript}`);
       res.status(500).json({ error: err.message, results: [] });
     }
   });
-  const server = import_http.default.createServer(app);
+    const server = import_http.default.createServer(app);
   const wss = new import_ws.WebSocketServer({ noServer: true });
   server.on("upgrade", (request, socket, head) => {
-    const pathname = new URL(request.url || "", `http://${request.headers.host}`).pathname;
-    if (pathname === "/live") {
+    const urlObj = new URL(request.url || "", `http://${request.headers.host || "127.0.0.1"}`);
+    if (urlObj.pathname === "/live") {
+      const token = urlObj.searchParams.get("token") || request.headers["x-myraa-token"];
+      if (!token || token !== MYRAA_AUTH_TOKEN) {
+        console.warn(`[Security] Rejected unauthorized WebSocket upgrade to /live from ${request.socket.remoteAddress}`);
+        socket.write("HTTP/1.1 401 Unauthorized\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nUnauthorized: Missing or invalid token\r\n");
+        socket.destroy();
+        return;
+      }
       wss.handleUpgrade(request, socket, head, (ws) => {
         wss.emit("connection", ws, request);
       });
@@ -2855,13 +2725,19 @@ ${interceptorScript}`);
     app.use("/assets", import_express.default.static(import_path2.default.join(process.cwd(), "assets")));
   }
 
-  app.get("*", (req, res, next) => {
+    app.get("*", (req, res, next) => {
     if (req.path.startsWith("/api") || req.path.startsWith("/live") || req.path.startsWith("/assets/")) {
       return next();
     }
     const indexPath = import_path2.default.join(distPath, "index.html");
     if (import_fs.default.existsSync(indexPath)) {
-      res.sendFile(indexPath);
+      let html = import_fs.default.readFileSync(indexPath, "utf8");
+      const injectScript = `<script>window.__MYRAA_TOKEN__="${MYRAA_AUTH_TOKEN}";</script>`;
+      if (!html.includes("__MYRAA_TOKEN__")) {
+        html = html.replace("<head>", "<head>" + injectScript);
+      }
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.send(html);
     } else {
       next();
     }

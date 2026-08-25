@@ -1,6 +1,55 @@
 <!doctype html>
 <html lang="en">
   <head>
+    <script>
+      (function() {
+        // Fetch token immediately if not injected
+        if (!window.__MYRAA_TOKEN__) {
+          try {
+            fetch('/api/auth/token').then(r => r.json()).then(d => {
+              if (d && d.token) window.__MYRAA_TOKEN__ = d.token;
+            }).catch(() => {});
+          } catch {}
+        }
+        
+        // Wrap window.fetch to automatically include x-myraa-token
+        const _origFetch = window.fetch;
+        window.fetch = async function(resource, init) {
+          const options = Object.assign({}, init);
+          const headers = new Headers(options.headers || {});
+          
+          if (!headers.has('x-myraa-token')) {
+            if (!window.__MYRAA_TOKEN__) {
+              try {
+                const tr = await _origFetch('/api/auth/token');
+                const td = await tr.json();
+                if (td && td.token) window.__MYRAA_TOKEN__ = td.token;
+              } catch {}
+            }
+            if (window.__MYRAA_TOKEN__) {
+              headers.set('x-myraa-token', window.__MYRAA_TOKEN__);
+            }
+          }
+          options.headers = headers;
+          return _origFetch(resource, options);
+        };
+
+        // Wrap window.WebSocket to append ?token= to /live
+        const _OrigWS = window.WebSocket;
+        window.WebSocket = function(url, protocols) {
+          if (typeof url === 'string' && url.includes('/live')) {
+            const tok = window.__MYRAA_TOKEN__;
+            if (tok && !url.includes('token=')) {
+              const sep = url.includes('?') ? '&' : '?';
+              url = url + sep + 'token=' + encodeURIComponent(tok);
+            }
+          }
+          return new _OrigWS(url, protocols);
+        };
+        window.WebSocket.prototype = _OrigWS.prototype;
+      })();
+    </script>
+
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <meta name="mobile-web-app-capable" content="yes" />

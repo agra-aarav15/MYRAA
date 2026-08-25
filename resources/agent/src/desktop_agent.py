@@ -80,6 +80,25 @@ def resolve_path(p: str) -> Path:
         return path_obj
     return MYRAA_DATA_DIR / path_obj
 
+
+def get_clicker_path() -> Path:
+    if getattr(sys, "frozen", False):
+        base = Path(sys.executable).parent
+    else:
+        base = Path(__file__).resolve().parent.parent
+    candidates = [
+        base / "clicker.exe",
+        base.parent / "agent" / "clicker.exe",
+        base.parent / "resources" / "agent" / "clicker.exe",
+        base / "resources" / "agent" / "clicker.exe",
+        Path(os.getcwd()) / "resources" / "agent" / "clicker.exe",
+        Path(os.getcwd()) / "clicker.exe"
+    ]
+    for c in candidates:
+        if c.exists():
+            return c
+    return base / "clicker.exe"
+
 def capture_screen_image() -> bytes:
     """Captures the primary monitor using native Win32 GDI BitBlt with full DPI awareness."""
     user32 = ctypes.windll.user32
@@ -133,7 +152,7 @@ def capture_screen_image() -> bytes:
         return out.getvalue()
     
     # Fallback to clicker.exe screenshot if PIL not imported
-    clicker = MYRAA_DATA_DIR.parent / "resources" / "agent" / "clicker.exe"
+    clicker = get_clicker_path()
     if clicker.exists():
         p = subprocess.run([str(clicker), "screenshot", "--base64"], capture_output=True, text=True)
         try:

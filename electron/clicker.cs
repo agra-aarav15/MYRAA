@@ -1181,19 +1181,22 @@ namespace MyraaNativeClicker {
                             break;
                         }
 
-                        WindowInfo targetWin = !string.IsNullOrEmpty(target) ? FindWindowByQuery(target) : null;
-                        IntPtr hWnd = targetWin != null ? targetWin.Handle : GetForegroundWindow();
-
-                        if (hWnd == IntPtr.Zero) {
-                            List<WindowInfo> wins = GetOpenWindows();
-                            if (wins.Count > 0) {
-                                targetWin = wins[0];
-                                hWnd = targetWin.Handle;
+                                                WindowInfo targetWin = null;
+                        IntPtr hWnd = IntPtr.Zero;
+                        if (!string.IsNullOrEmpty(target)) {
+                            targetWin = FindWindowByQuery(target);
+                            if (targetWin == null) {
+                                Console.WriteLine("{\"success\":false,\"error\":\"Window not found for '" + EscapeJson(target) + "'\"}");
+                                break;
                             }
+                            hWnd = targetWin.Handle;
+                        } else {
+                            hWnd = GetForegroundWindow();
                         }
 
                         if (hWnd == IntPtr.Zero) {
-                            hWnd = (IntPtr)Process.GetCurrentProcess().Id;
+                            Console.WriteLine("{\"success\":false,\"error\":\"No active window found.\"}");
+                            break;
                         }
 
                         switch (action) {
