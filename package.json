@@ -1,102 +1,25 @@
 {
   "name": "myraa",
   "productName": "MYRAA",
-  "description": "MYRAA — Private 3D AI Desktop Companion & Autonomous Voice Assistant created by Aarav.",
+  "description": "MYRAA — a private 3D AI desktop companion powered by each user's own Gemini API key.",
   "author": "Aarav",
-  "copyright": "Copyright (c) 2026 Aarav. All Rights Reserved.",
-  "license": "MIT",
   "private": true,
   "version": "1.0.0",
   "type": "module",
   "main": "electron/main.cjs",
-  "scripts": {
-    "start": "node dist/server.cjs",
-    "start:unix": "node local-agent.js & node dist/server.cjs",
-    "setup:unix": "npm install",
-    "build": "vite build",
-    "compile:launcher": "powershell -ExecutionPolicy Bypass -File scripts/compile-launcher.ps1",
-    "sync:android": "node scripts/sync-android-assets.js",
-    "package:win": "npm run build && electron-builder --win --x64",
-    "package:portable": "npm run build && electron-builder --win --x64 -p never --config.win.target=portable",
-    "package:nsis": "npm run build && electron-builder --win --x64 -p never --config.win.target=nsis",
-    "package:zip": "powershell -ExecutionPolicy Bypass -File scripts/package-universal-zip.ps1",
-    "package:all": "npm run compile:launcher && npm run build && electron-builder --win --x64 && npm run package:zip"
-  },
   "dependencies": {
     "@google/genai": "^2.4.0",
     "@tailwindcss/vite": "^4.1.14",
     "@vitejs/plugin-react": "^5.0.4",
-    "cors": "^2.8.6",
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
     "lucide-react": "^0.546.0",
     "mmd-parser": "^1.0.4",
     "motion": "^12.23.24",
-    "playwright": "^1.62.1",
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
     "three": "^0.180.0",
     "vite": "^6.2.3",
     "ws": "^8.21.0"
-  },
-  "devDependencies": {
-    "electron": "33.2.1",
-    "electron-builder": "25.1.8"
-  },
-  "build": {
-    "appId": "com.aarav.myraa",
-    "productName": "MYRAA",
-    "electronVersion": "33.2.1",
-    "copyright": "Copyright (c) 2026 Aarav",
-    "directories": {
-      "output": "release_dist",
-      "buildResources": "build"
-    },
-    "extraResources": [
-      {
-        "from": "resources/agent",
-        "to": "agent",
-        "filter": [
-          "**/*"
-        ]
-      }
-    ],
-    "win": {
-      "target": [
-        {
-          "target": "nsis",
-          "arch": ["x64"]
-        },
-        {
-          "target": "portable",
-          "arch": ["x64"]
-        }
-      ],
-      "icon": "build/icon.ico"
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true,
-      "shortcutName": "MYRAA",
-      "artifactName": "MYRAA-Setup-${version}.${ext}"
-    },
-    "portable": {
-      "artifactName": "MYRAA-Portable-${version}.${ext}"
-    },
-    "files": [
-      "dist/**/*",
-      "electron/**/*",
-      "assets/**/*",
-      "package.json",
-      "local-agent.js",
-      "START_SERVER.bat",
-      "secrets.example.json",
-      "icon.png",
-      "icon.ico"
-    ],
-    "asar": false,
-    "forceCodeSigning": false
   }
 }

@@ -1,71 +1,16 @@
 <!doctype html>
 <html lang="en">
   <head>
-    <script>
-      (function() {
-        // Fetch token immediately if not injected
-        if (!window.__MYRAA_TOKEN__) {
-          try {
-            fetch('/api/auth/token').then(r => r.json()).then(d => {
-              if (d && d.token) window.__MYRAA_TOKEN__ = d.token;
-            }).catch(() => {});
-          } catch {}
-        }
-        
-        // Wrap window.fetch to automatically include x-myraa-token
-        const _origFetch = window.fetch;
-        window.fetch = async function(resource, init) {
-          const options = Object.assign({}, init);
-          const headers = new Headers(options.headers || {});
-          
-          if (!headers.has('x-myraa-token')) {
-            if (!window.__MYRAA_TOKEN__) {
-              try {
-                const tr = await _origFetch('/api/auth/token');
-                const td = await tr.json();
-                if (td && td.token) window.__MYRAA_TOKEN__ = td.token;
-              } catch {}
-            }
-            if (window.__MYRAA_TOKEN__) {
-              headers.set('x-myraa-token', window.__MYRAA_TOKEN__);
-            }
-          }
-          options.headers = headers;
-          return _origFetch(resource, options);
-        };
-
-        // Wrap window.WebSocket to append ?token= to /live
-        const _OrigWS = window.WebSocket;
-        window.WebSocket = function(url, protocols) {
-          if (typeof url === 'string' && url.includes('/live')) {
-            const tok = window.__MYRAA_TOKEN__;
-            if (tok && !url.includes('token=')) {
-              const sep = url.includes('?') ? '&' : '?';
-              url = url + sep + 'token=' + encodeURIComponent(tok);
-            }
-          }
-          return new _OrigWS(url, protocols);
-        };
-        window.WebSocket.prototype = _OrigWS.prototype;
-      })();
-    </script>
-
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-    <meta name="mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="theme-color" content="#020205" />
-    <title>MYRAA — AI Desktop Companion by Aarav</title>
-    <link rel="icon" type="image/png" href="/icon.png" />
-    <link rel="manifest" href="/manifest.json" />
-    <link rel="stylesheet" crossorigin href="/assets/index-DDs6am49.css" />
-    <link rel="stylesheet" crossorigin href="/assets/black-glassmorphism.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MYRAA</title>
     <script type="module" crossorigin src="/assets/index-C06wV1d4.js"></script>
-    <link rel="modulepreload" crossorigin href="/assets/character-C0yD4mYn.js" />
-    <link rel="modulepreload" crossorigin href="/assets/three-BBlFD6pU.js" />
+    <link rel="modulepreload" crossorigin href="/assets/character-C0yD4mYn.js">
+    <link rel="modulepreload" crossorigin href="/assets/three-BBlFD6pU.js">
+    <link rel="stylesheet" crossorigin href="/assets/index-DDs6am49.css">
   </head>
   <body>
     <div id="root"></div>
   </body>
 </html>
+
