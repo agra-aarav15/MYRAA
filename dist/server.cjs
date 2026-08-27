@@ -2782,7 +2782,8 @@ async function startServer() {
   ];
   let distPath = candidateDirs.find(d => import_fs.default.existsSync(import_path2.default.join(d, "index.html"))) || __dirname;
 
-  app.use(import_express.default.static(distPath));
+  // Serve static assets WITHOUT auto-index so "/" always goes through token injection
+  app.use(import_express.default.static(distPath, { index: false }));
   if (import_fs.default.existsSync(import_path2.default.join(distPath, "assets"))) {
     app.use("/assets", import_express.default.static(import_path2.default.join(distPath, "assets")));
   }

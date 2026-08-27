@@ -1,9 +1,12 @@
 {
-  "autoStart": false,
-  "wakeWordEnabled": false,
-  "wakePhrase": "hey myraa",
-  "micDeviceId": "",
-  "sensitivity": 53,
-  "animations": true,
-  "characterShine": 0
+    "autoStart":  false,
+    "wakeWordEnabled":  false,
+    "wakePhrase":  "hey myraa",
+    "micDeviceId":  "",
+    "sensitivity":  53,
+    "animations":  true,
+    "characterShine":  0,
+    "apiKeys":  {
+                    "gemini":  ""
+                }
 }

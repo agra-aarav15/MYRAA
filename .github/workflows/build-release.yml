@@ -10,9 +10,9 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: 'Release tag (e.g. v1.0.0)'
+        description: 'Release tag (e.g. v1.0.0). Leave empty to use the package.json version.'
         required: false
-        default: 'v1.0.0'
+        default: ''
 
 permissions:
   contents: write
@@ -30,27 +30,51 @@ jobs:
         with:
           node-version: 20
 
+      - name: Read Version from package.json
+        shell: bash
+        run: echo "VERSION=$(node -p "require('./package.json').version")" >> "$GITHUB_ENV"
+
       - name: Install Dependencies
-        run: npm install --no-audit
+        run: npm ci
+
+      - name: Compile Native C# Clicker and Launcher
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "build")) { New-Item -ItemType Directory -Path "build" -Force }
+          if (-not (Test-Path "icon.ico")) { throw "Missing required icon.ico in repository root!" }
+          Copy-Item "icon.ico" -Destination "build/icon.ico" -Force
+          if (Test-Path "icon.png") { Copy-Item "icon.png" -Destination "build/icon.png" -Force }
+          $csc = 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+          if (-not (Test-Path $csc)) { throw "Required C# compiler csc.exe not found at $csc!" }
+          if (-not (Test-Path "electron\clicker.cs")) { throw "Missing required source file electron\clicker.cs!" }
+          & $csc /target:exe /out:build\clicker.exe /optimize+ /platform:anycpu /r:System.Drawing.dll,System.Windows.Forms.dll,System.Management.dll electron\clicker.cs
+          if ($LASTEXITCODE -ne 0) { throw "Failed to compile clicker.exe!" }
+          if (Test-Path "electron\launcher.cs") {
+            & $csc /target:winexe /out:build\MYRAA-launcher.exe /win32icon:build\icon.ico electron\launcher.cs
+            if ($LASTEXITCODE -ne 0) { throw "Failed to compile MYRAA-launcher.exe!" }
+          }
+          # Ship the freshly compiled engine, not the stale tracked copy
+          if (Test-Path "resources\agent") {
+            Copy-Item "build\clicker.exe" -Destination "resources\agent\clicker.exe" -Force
+            Write-Host "Synced freshly compiled clicker.exe into resources/agent for packaging."
+          } else { throw "Missing resources\agent folder — installers would ship without the desktop engine!" }
 
       - name: Package with Electron Builder (NSIS & Portable)
         shell: pwsh
         run: |
-          if (-not (Test-Path "build")) { New-Item -ItemType Directory -Path "build" -Force }
-          if (Test-Path "icon.ico") { Copy-Item "icon.ico" -Destination "build/icon.ico" -Force }
-          if (Test-Path "icon.png") { Copy-Item "icon.png" -Destination "build/icon.png" -Force }
           npx --yes electron-builder --win --x64 -p never --config.directories.output=release_dist
+          if (-not (Test-Path "release_dist\win-unpacked\resources\agent\clicker.exe")) { throw "Packaged app is missing resources\agent\clicker.exe — extraResources failed!" }
 
       - name: Package Universal Standalone ZIP
         shell: pwsh
         run: |
           if (Test-Path "release_dist\win-unpacked") {
             Write-Host "Creating Universal Standalone Portable ZIP from win-unpacked..."
-            Compress-Archive -Path release_dist\win-unpacked\* -DestinationPath release_dist\MYRAA-v1.0.0-Windows-Universal-Portable.zip -CompressionLevel Optimal -Force
+            Compress-Archive -Path release_dist\win-unpacked\* -DestinationPath "release_dist\MYRAA-v${env:VERSION}-Windows-Universal-Portable.zip" -CompressionLevel Optimal -Force
           } else {
             Write-Host "Creating Universal Standalone Portable ZIP from repository root..."
             if (-not (Test-Path "release_dist")) { New-Item -ItemType Directory -Path "release_dist" -Force }
-            Compress-Archive -Path dist, electron, assets, START_SERVER.bat, package.json, memories.json, icon.ico, icon.png, README.md, LICENSE -DestinationPath release_dist\MYRAA-v1.0.0-Windows-Universal-Portable.zip -CompressionLevel Optimal -Force
+            Compress-Archive -Path dist, electron, assets, START_SERVER.bat, package.json, icon.ico, icon.png, README.md, LICENSE -DestinationPath "release_dist\MYRAA-v${env:VERSION}-Windows-Universal-Portable.zip" -CompressionLevel Optimal -Force
           }
 
       - name: Standardize Windows Output Filenames
@@ -58,13 +82,15 @@ jobs:
         run: |
           Get-ChildItem release_dist
           $setup = Get-ChildItem release_dist -Filter "*Setup*.exe" | Select-Object -First 1
-          if ($setup -and ($setup.Name -ne "MYRAA-Setup-1.0.0.exe")) {
-            Copy-Item $setup.FullName -Destination "release_dist/MYRAA-Setup-1.0.0.exe" -Force
+          if ($setup -and ($setup.Name -ne "MYRAA-Setup-${env:VERSION}.exe")) {
+            Copy-Item $setup.FullName -Destination "release_dist/MYRAA-Setup-${env:VERSION}.exe" -Force
           }
           $portable = Get-ChildItem release_dist -Filter "*Portable*.exe" | Select-Object -First 1
-          if ($portable -and ($portable.Name -ne "MYRAA-Portable-1.0.0.exe")) {
-            Copy-Item $portable.FullName -Destination "release_dist/MYRAA-Portable-1.0.0.exe" -Force
+          if ($portable -and ($portable.Name -ne "MYRAA-Portable-${env:VERSION}.exe")) {
+            Copy-Item $portable.FullName -Destination "release_dist/MYRAA-Portable-${env:VERSION}.exe" -Force
           }
+          if (-not (Get-ChildItem release_dist -Filter "*Setup*.exe")) { throw "No Setup EXE produced!" }
+          if (-not (Get-ChildItem release_dist -Filter "*Portable*.exe")) { throw "No Portable EXE produced!" }
 
       - name: Generate Windows SHA256 Checksums
         shell: pwsh
@@ -81,7 +107,7 @@ jobs:
             release_dist/MYRAA-Portable-*.exe
             release_dist/MYRAA-*-Windows-Universal-Portable.zip
             release_dist/SHA256SUMS-windows.txt
-          if-no-files-found: warn
+          if-no-files-found: error
 
   build-android:
     name: Build Android Companion APK
@@ -102,9 +128,11 @@ jobs:
       - name: Sync Web Assets to Android
         run: |
           mkdir -p android/app/src/main/assets
-          cp -r dist/* android/app/src/main/assets/ || true
+          cp -r dist/* android/app/src/main/assets/
           if [ -f icon.png ]; then cp icon.png android/app/src/main/assets/icon.png; fi
           if [ -f icon.ico ]; then cp icon.ico android/app/src/main/assets/favicon.ico; fi
+          rm -f android/app/src/main/assets/agent/clicker.exe android/app/src/main/assets/clicker.exe
+          if [ ! -f android/app/src/main/assets/index.html ]; then echo "FATAL: dist web bundle missing index.html"; exit 1; fi
 
       - name: Compile Standalone Android APK
         run: |
@@ -113,19 +141,41 @@ jobs:
           BUILD_TOOLS_DIR=$(find $ANDROID_HOME/build-tools -maxdepth 1 -mindepth 1 | sort -V | tail -n 1)
           PLATFORM_JAR=$(find $ANDROID_HOME/platforms -name "android.jar" | sort -V | tail -n 1)
           echo "Using Build Tools: $BUILD_TOOLS_DIR, Platform: $PLATFORM_JAR"
-          
+
           mkdir -p apk_scratch/compiled_res apk_scratch/gen apk_scratch/classes apk_scratch/dex
           $BUILD_TOOLS_DIR/aapt2 compile --dir android/app/src/main/res -o apk_scratch/compiled_res/res.zip
           $BUILD_TOOLS_DIR/aapt2 link -I $PLATFORM_JAR --manifest android/app/src/main/AndroidManifest.xml -A android/app/src/main/assets -o apk_scratch/unaligned.apk --java apk_scratch/gen apk_scratch/compiled_res/res.zip --auto-add-overlay
-          
+
           javac --release 8 -cp $PLATFORM_JAR -d apk_scratch/classes apk_scratch/gen/com/example/myraa/R.java android/app/src/main/java/com/example/myraa/MainActivity.java
           java -cp $BUILD_TOOLS_DIR/lib/d8.jar com.android.tools.r8.D8 --lib $PLATFORM_JAR --output apk_scratch/dex $(find apk_scratch/classes -name "*.class")
-          
+
           jar -uf apk_scratch/unaligned.apk -C apk_scratch/dex classes.dex
           $BUILD_TOOLS_DIR/zipalign -v -p 4 apk_scratch/unaligned.apk apk_scratch/aligned.apk
-          
-          keytool -genkey -v -keystore apk_scratch/debug.keystore -alias androiddebugkey -storepass android -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
-          java -jar $BUILD_TOOLS_DIR/lib/apksigner.jar sign --ks apk_scratch/debug.keystore --ks-pass pass:android --ks-key-alias androiddebugkey --key-pass pass:android --out android_dist/MYRAA.apk apk_scratch/aligned.apk
+          echo "✅ APK assembled (unsigned) — next step signs it."
+
+      - name: Sign APK (persistent release keystore)
+        env:
+          MYRAA_KEYSTORE_BASE64: ${{ secrets.MYRAA_KEYSTORE_BASE64 }}
+          MYRAA_KEYSTORE_PASS: ${{ secrets.MYRAA_KEYSTORE_PASS }}
+        run: |
+          BUILD_TOOLS_DIR=$(find $ANDROID_HOME/build-tools -maxdepth 1 -mindepth 1 | sort -V | tail -n 1)
+          if [ -n "$MYRAA_KEYSTORE_BASE64" ] && [ -n "$MYRAA_KEYSTORE_PASS" ]; then
+            echo "$MYRAA_KEYSTORE_BASE64" | base64 -d > apk_scratch/release.keystore
+            KS_FILE=apk_scratch/release.keystore
+            KS_ALIAS=myraa
+            KS_PASS="pass:$MYRAA_KEYSTORE_PASS"
+            KEY_PASS="pass:$MYRAA_KEYSTORE_PASS"
+            echo "Signing with the persistent MYRAA release keystore (updates will install over previous versions)."
+          else
+            echo "WARNING: MYRAA_KEYSTORE_BASE64 / MYRAA_KEYSTORE_PASS secrets are not configured!"
+            echo "Falling back to an EPHEMERAL keystore — this APK will NOT install over a previously released one."
+            keytool -genkeypair -v -keystore apk_scratch/ephemeral.keystore -alias myraa -storepass android -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=MYRAA, O=Aarav, C=IN"
+            KS_FILE=apk_scratch/ephemeral.keystore
+            KS_ALIAS=myraa
+            KS_PASS=pass:android
+            KEY_PASS=pass:android
+          fi
+          java -jar "$BUILD_TOOLS_DIR/lib/apksigner.jar" sign --ks "$KS_FILE" --ks-pass "$KS_PASS" --ks-key-alias "$KS_ALIAS" --key-pass "$KEY_PASS" --out android_dist/MYRAA.apk apk_scratch/aligned.apk
           echo "✅ Successfully built standalone MYRAA.apk!"
 
       - name: Upload Android Artifact
@@ -133,7 +183,7 @@ jobs:
         with:
           name: android-artifact
           path: android_dist/MYRAA.apk
-          if-no-files-found: warn
+          if-no-files-found: error
 
   publish-release:
     name: Publish GitHub Release
@@ -141,6 +191,12 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout Code (for version)
+        uses: actions/checkout@v4
+
+      - name: Read Version from package.json
+        run: echo "VERSION=$(node -p "require('./package.json').version")" >> "$GITHUB_ENV"
+
       - name: Download Windows Artifacts
         uses: actions/download-artifact@v4
         with:
@@ -156,16 +212,16 @@ jobs:
       - name: Generate Consolidated Checksums
         run: |
           cd release_files
-          sha256sum MYRAA-* MYRAA.apk 2>/dev/null > SHA256SUMS.txt || sha256sum * 2>/dev/null > SHA256SUMS.txt || true
-          cp SHA256SUMS.txt checksums.sha256 2>/dev/null || true
+          sha256sum MYRAA-* MYRAA.apk > SHA256SUMS.txt
+          cp SHA256SUMS.txt checksums.sha256
           echo "Generated SHA256 Checksums:"
-          cat SHA256SUMS.txt || true
+          cat SHA256SUMS.txt
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name || inputs.release_tag || 'v1.0.0' }}
-          name: "MYRAA v1.0.0 — Universal Desktop Companion & PC Control Engine by Aarav"
+          tag_name: ${{ inputs.release_tag || (startsWith(github.ref, 'refs/tags/') && github.ref_name) || format('v{0}', env.VERSION) }}
+          name: "MYRAA v${{ env.VERSION }} — Universal Desktop Companion & PC Control Engine by Aarav"
           draft: false
           prerelease: false
           files: |
@@ -176,13 +232,13 @@ jobs:
             release_files/SHA256SUMS.txt
             release_files/checksums.sha256
           body: |
-            # 🌸 MYRAA v1.0.0 — Universal Desktop Companion & PC Control Engine
+            # 🌸 MYRAA v${{ env.VERSION }} — Universal Desktop Companion & PC Control Engine
             **Created & Designed by Aarav**
 
             ### 📥 Direct Distribution Downloads:
-            - **`MYRAA-Setup-1.0.0.exe`**: Full Windows NSIS installer with desktop shortcut & uninstaller.
-            - **`MYRAA-Portable-1.0.0.exe`**: Single-file standalone zero-install executable.
-            - **`MYRAA-v1.0.0-Windows-Universal-Portable.zip`**: Universal portable distribution folder archive.
+            - **`MYRAA-Setup-${{ env.VERSION }}.exe`**: Full Windows NSIS installer with desktop shortcut & uninstaller.
+            - **`MYRAA-Portable-${{ env.VERSION }}.exe`**: Single-file standalone zero-install executable.
+            - **`MYRAA-v${{ env.VERSION }}-Windows-Universal-Portable.zip`**: Universal portable distribution folder archive (includes the native clicker engine).
             - **`MYRAA.apk`**: Standalone Android mobile companion application with internal server engine & full phone controls.
             - **`SHA256SUMS.txt`**: Cryptographic SHA256 verification checksums for all release binaries.
 
