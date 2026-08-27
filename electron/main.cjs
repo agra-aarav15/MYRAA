@@ -16,23 +16,38 @@
 
 'use strict';
 
-const { app, BrowserWindow, Menu, shell, dialog } = require('electron');
+const { app, BrowserWindow, Menu, shell, dialog, session } = require('electron');
 const path = require('path');
 const http = require('http');
 const { spawn } = require('child_process');
 const fs = require('fs');
+
+// Disable unexpected global node options that could interfere with packaged runtime
+delete process.env.NODE_OPTIONS;
+
+// Enable instant audio playback without requiring preliminary click gestures
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
 // --- Constants -------------------------------------------------------------
 const SERVER_PORT = 3000;
 const SERVER_ORIGIN = `http://localhost:${SERVER_PORT}`;
 const SERVER_READY_TIMEOUT_MS = 40_000;
 
-// In development we run from the repo root; when packaged the app files live in
-// resources/app (asar-unpacked handling is added in the packaging phase).
-const APP_ROOT = app.isPackaged
-  ? path.join(process.resourcesPath, 'app')
-  : path.join(__dirname, '..');
+function resolveAppRoot() {
+  if (!app.isPackaged) return path.join(__dirname, '..');
+  const candidates = [
+    path.join(process.resourcesPath, 'app'),
+    path.join(process.resourcesPath, 'app.asar'),
+    __dirname,
+    path.join(__dirname, '..')
+  ];
+  for (const c of candidates) {
+    if (fs.existsSync(path.join(c, 'dist', 'server.cjs'))) return c;
+  }
+  return path.join(process.resourcesPath, 'app');
+}
 
+const APP_ROOT = resolveAppRoot();
 const SERVER_ENTRY = path.join(APP_ROOT, 'dist', 'server.cjs');
 const APP_ICON = path.join(APP_ROOT, 'build', 'icon.png');
 
@@ -77,6 +92,9 @@ function startBackend() {
   // Data (memories, settings, secrets, logs) must live in a writable per-user
   // folder — the install dir under Program Files is read-only.
   const dataDir = app.getPath('userData');
+  try {
+    fs.mkdirSync(dataDir, { recursive: true });
+  } catch {}
 
   // Frozen Python desktop agent (bundled as an extraResource when packaged).
   // In development this file won't exist, so the backend falls back to running
@@ -224,6 +242,18 @@ function createMainWindow() {
 // ---------------------------------------------------------------------------
 async function bootstrap() {
   app.setAppUserModelId('com.myraa.desktop');
+
+  if (session && session.defaultSession) {
+    session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+      const allowed = ['media', 'microphone', 'audioCapture', 'screen', 'notifications', 'display-capture'];
+      callback(allowed.includes(permission));
+    });
+    session.defaultSession.setPermissionCheckHandler((webContents, permission) => {
+      const allowed = ['media', 'microphone', 'audioCapture', 'screen', 'notifications', 'display-capture'];
+      return allowed.includes(permission);
+    });
+  }
+
   createSplashWindow();
 
   try {

@@ -92,6 +92,14 @@ function readSecrets() {
 function getGeminiApiKey() {
   const stored = readSecrets().geminiApiKey?.trim();
   if (stored) return stored;
+  try {
+    const settingsPath = import_path.default.join(DATA_DIR, "settings.json");
+    if (import_fs.default.existsSync(settingsPath)) {
+      const s = JSON.parse(import_fs.default.readFileSync(settingsPath, "utf-8"));
+      const k = (s?.apiKeys?.gemini || s?.geminiApiKey)?.trim();
+      if (k) return k;
+    }
+  } catch {}
   if (readSecrets().ignoreEnvironmentApiKey) return void 0;
   const env = process.env.GEMINI_API_KEY?.trim();
   return env || void 0;
@@ -652,11 +660,15 @@ function getClickerExePath() {
     path.resolve(__dirname, "../../agent/clicker.exe"),
     path.resolve(__dirname, "../agent/clicker.exe"),
     path.resolve(__dirname, "agent/clicker.exe"),
+    path.resolve(__dirname, "../../resources/agent/clicker.exe"),
+    path.resolve(__dirname, "../resources/agent/clicker.exe"),
+    path.resolve(__dirname, "resources/agent/clicker.exe"),
     path.resolve(__dirname, "../build/clicker.exe"),
     path.resolve(__dirname, "build/clicker.exe"),
     path.resolve(__dirname, "clicker.exe"),
     path.join(process.resourcesPath || "", "agent", "clicker.exe"),
     path.join(process.resourcesPath || "", "clicker.exe"),
+    path.join(process.resourcesPath || "", "app", "resources", "agent", "clicker.exe"),
     path.resolve(process.cwd(), "resources/agent/clicker.exe"),
     path.resolve(process.cwd(), "resources/app/build/clicker.exe"),
     path.resolve(process.cwd(), "build/clicker.exe"),
@@ -1794,6 +1806,11 @@ async function startServer() {
       const current = loadSettingsFile();
       const next = { ...current, ...patch };
       saveSettingsFile(next);
+      if (patch.apiKeys?.gemini && typeof patch.apiKeys.gemini === "string") {
+        try {
+          setGeminiApiKey(patch.apiKeys.gemini);
+        } catch {}
+      }
       if ("autoStart" in patch) {
         callDesktopAgent(patch.autoStart ? "enableAutoStart" : "disableAutoStart", {}).catch(() => {
         });
@@ -2506,9 +2523,20 @@ async function startServer() {
         },
         callbacks: {
           onmessage: (message) => {
-            const audio = message.serverContent?.modelTurn?.parts[0]?.inlineData?.data;
-            if (audio) {
-              clientWs.send(JSON.stringify({ type: "audio", audio }));
+            if (message.serverContent?.modelTurn?.parts) {
+              for (const part of message.serverContent.modelTurn.parts) {
+                if (part.inlineData?.data) {
+                  clientWs.send(JSON.stringify({ type: "audio", audio: part.inlineData.data }));
+                }
+                if (part.text) {
+                  clientWs.send(JSON.stringify({ type: "transcription", role: "model", text: part.text }));
+                  currentModelResponseText += part.text;
+                }
+              }
+            }
+            if (message.serverContent?.outputTranscription?.text) {
+              clientWs.send(JSON.stringify({ type: "transcription", role: "model", text: message.serverContent.outputTranscription.text }));
+              currentModelResponseText += message.serverContent.outputTranscription.text;
             }
             if (message.serverContent?.interrupted) {
               console.log("[Myraa Interrupted!]");
@@ -2534,15 +2562,17 @@ async function startServer() {
                 })();
               }
             }
-            const modelText = message.serverContent?.outputTranscription?.text ?? message.serverContent?.modelTurn?.parts?.[0]?.text;
-            if (modelText) {
-              clientWs.send(JSON.stringify({ type: "transcription", role: "model", text: modelText }));
-              currentModelResponseText += modelText;
+            if (message.serverContent?.userTurn?.parts) {
+              for (const part of message.serverContent.userTurn.parts) {
+                if (part.text) {
+                  clientWs.send(JSON.stringify({ type: "transcription", role: "user", text: part.text }));
+                  dialogueHistory.push({ role: "user", text: part.text });
+                }
+              }
             }
-            const userTextOutput = message.serverContent?.inputTranscription?.text ?? message.serverContent?.userTurn?.parts?.[0]?.text;
-            if (userTextOutput) {
-              clientWs.send(JSON.stringify({ type: "transcription", role: "user", text: userTextOutput }));
-              dialogueHistory.push({ role: "user", text: userTextOutput });
+            if (message.serverContent?.inputTranscription?.text) {
+              clientWs.send(JSON.stringify({ type: "transcription", role: "user", text: message.serverContent.inputTranscription.text }));
+              dialogueHistory.push({ role: "user", text: message.serverContent.inputTranscription.text });
             }
             if (message.toolCall?.functionCalls) {
               for (const fc of message.toolCall.functionCalls) {
@@ -2642,21 +2672,36 @@ async function startServer() {
             if (authenticationRejected) {
               clearGeminiApiKey();
             }
-            try {
-              clientWs.send(JSON.stringify(authenticationRejected ? {
-                type: "error",
-                code: "INVALID_API_KEY",
-                error: "Google rejected the saved Gemini API key. Enter a new key to continue."
-              } : {
-                type: "error",
-                error: `Gemini Live closed (${details}). Open Settings \u2192 Voice to verify or replace the API key.`
-              }));
-            } catch {
+            if (event.code !== 1000 && event.code !== 1005) {
+              try {
+                clientWs.send(JSON.stringify(authenticationRejected ? {
+                  type: "error",
+                  code: "INVALID_API_KEY",
+                  error: "Google rejected the saved Gemini API key. Enter a new key to continue."
+                } : {
+                  type: "error",
+                  error: `Gemini Live closed (${details}). Open Settings \u2192 Voice to verify or replace the API key.`
+                }));
+              } catch {
+              }
             }
           }
         }
       });
       clientWs.send(JSON.stringify({ type: "status", status: "connected" }));
+      setTimeout(() => {
+        try {
+          session.sendClientContent({
+            turns: [{
+              role: "user",
+              parts: [{ text: "Hello Myraa! You are now online. Please say hello and warmly greet Aarav out loud right now!" }]
+            }],
+            turnComplete: true
+          });
+        } catch (greetErr) {
+          console.warn("Initial greeting turn notice:", greetErr.message);
+        }
+      }, 250);
       clientWs.on("message", (rawMsg) => {
         try {
           const msg = JSON.parse(rawMsg.toString());

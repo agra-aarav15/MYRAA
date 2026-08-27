@@ -48,11 +48,19 @@
     "productName": "MYRAA",
     "electronVersion": "33.2.1",
     "copyright": "Copyright (c) 2026 Aarav",
-    "afterPack": "electron/afterPack.cjs",
     "directories": {
       "output": "release_dist",
       "buildResources": "build"
     },
+    "extraResources": [
+      {
+        "from": "resources/agent",
+        "to": "agent",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
     "win": {
       "target": [
         {
@@ -88,7 +96,7 @@
       "icon.png",
       "icon.ico"
     ],
-    "asar": true,
+    "asar": false,
     "forceCodeSigning": false
   }
 }
