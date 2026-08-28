@@ -92,14 +92,6 @@ function readSecrets() {
 function getGeminiApiKey() {
   const stored = readSecrets().geminiApiKey?.trim();
   if (stored) return stored;
-  try {
-    const settingsPath = import_path.default.join(DATA_DIR, "settings.json");
-    if (import_fs.default.existsSync(settingsPath)) {
-      const s = JSON.parse(import_fs.default.readFileSync(settingsPath, "utf-8"));
-      const k = (s?.apiKeys?.gemini || s?.geminiApiKey)?.trim();
-      if (k) return k;
-    }
-  } catch {}
   if (readSecrets().ignoreEnvironmentApiKey) return void 0;
   const env = process.env.GEMINI_API_KEY?.trim();
   return env || void 0;
@@ -660,15 +652,11 @@ function getClickerExePath() {
     path.resolve(__dirname, "../../agent/clicker.exe"),
     path.resolve(__dirname, "../agent/clicker.exe"),
     path.resolve(__dirname, "agent/clicker.exe"),
-    path.resolve(__dirname, "../../resources/agent/clicker.exe"),
-    path.resolve(__dirname, "../resources/agent/clicker.exe"),
-    path.resolve(__dirname, "resources/agent/clicker.exe"),
     path.resolve(__dirname, "../build/clicker.exe"),
     path.resolve(__dirname, "build/clicker.exe"),
     path.resolve(__dirname, "clicker.exe"),
     path.join(process.resourcesPath || "", "agent", "clicker.exe"),
     path.join(process.resourcesPath || "", "clicker.exe"),
-    path.join(process.resourcesPath || "", "app", "resources", "agent", "clicker.exe"),
     path.resolve(process.cwd(), "resources/agent/clicker.exe"),
     path.resolve(process.cwd(), "resources/app/build/clicker.exe"),
     path.resolve(process.cwd(), "build/clicker.exe"),
@@ -1526,32 +1514,25 @@ async function callDesktopAgent(tool, args = {}) {
     } else {
       response = { ok: false, error: `Unsupported tab action: ${action}` };
     }
-    } else if (tool === "browserMediaControl") {
+  } else if (tool === "browserMediaControl") {
     const action = (args.action || "play_pause").toLowerCase().trim();
     const clickerExe = getClickerExePath();
     if (clickerExe) {
-      if (["play", "pause", "play_pause", "toggle"].includes(action)) {
+      if (action === "play" || action === "pause" || action === "play_pause" || action === "toggle") {
         try { require("child_process").execFileSync(clickerExe, ["key", "mediaplaypause"], { timeout: 2000 }); } catch {}
         response = { ok: true, result: "Toggled media playback (Play/Pause)." };
-      } else if (["next", "skip"].includes(action)) {
+      } else if (action === "next" || action === "skip") {
         try { require("child_process").execFileSync(clickerExe, ["key", "medianext"], { timeout: 2000 }); } catch {}
         response = { ok: true, result: "Skipped to next media track." };
-      } else if (["prev", "previous"].includes(action)) {
+      } else if (action === "prev" || action === "previous") {
         try { require("child_process").execFileSync(clickerExe, ["key", "mediaprev"], { timeout: 2000 }); } catch {}
         response = { ok: true, result: "Returned to previous media track." };
       } else if (action === "stop") {
         try { require("child_process").execFileSync(clickerExe, ["key", "mediastop"], { timeout: 2000 }); } catch {}
         response = { ok: true, result: "Stopped media playback." };
-      } else if (["mute", "unmute"].includes(action)) {
+      } else if (action === "mute" || action === "unmute") {
         try { require("child_process").execFileSync(clickerExe, ["volume", "mute"], { timeout: 2000 }); } catch {}
-        response = { ok: true, result: "Toggled audio mute state." };
-      } else if (action === "volume") {
-        const val = Math.max(0, Math.min(100, Number(args.value ?? 50)));
-        try { require("child_process").execFileSync(clickerExe, ["volume", "set", String(val)], { timeout: 2000 }); } catch {}
-        response = { ok: true, result: `Set volume to ${val}%.` };
-      } else if (["fullscreen", "exit_fullscreen"].includes(action)) {
-        try { require("child_process").execFileSync(clickerExe, ["key", "f"], { timeout: 2000 }); } catch {}
-        response = { ok: true, result: "Toggled browser video fullscreen." };
+        response = { ok: true, result: "Toggled media mute." };
       } else {
         response = { ok: false, error: `Unknown media action: ${action}` };
       }
@@ -1699,37 +1680,17 @@ async function startServer() {
     res.json({ token: MYRAA_AUTH_TOKEN });
   });
 
-  // Security: Allow requests from local UI and validate token for remote
+  // Security: Require x-myraa-token on all POST/PUT/DELETE mutating endpoints
   app.use((req, res, next) => {
     if (req.method === "GET" || req.method === "OPTIONS" || req.path === "/api/auth/token") {
       return next();
     }
-    const ip = req.ip || req.socket.remoteAddress || "";
-    const host = req.headers.host || "";
-    const isLocalhost = ip.includes("127.0.0.1") || ip.includes("::1") || host.includes("localhost") || host.includes("127.0.0.1");
     const tokenHeader = req.headers["x-myraa-token"] || req.headers["authorization"]?.replace("Bearer ", "");
-    if (isLocalhost || tokenHeader === MYRAA_AUTH_TOKEN) {
-      return next();
+    if (!tokenHeader || tokenHeader !== MYRAA_AUTH_TOKEN) {
+      return res.status(401).json({ ok: false, error: "Unauthorized: Missing or invalid x-myraa-token header." });
     }
-    return res.status(401).json({ ok: false, error: "Unauthorized: Missing or invalid x-myraa-token header." });
+    next();
   });
-
-  // Local agent health bridge on port 8765 to prevent frontend console connection refused warnings
-  try {
-    const http8765 = require("http");
-    const s8765 = http8765.createServer((req, res) => {
-      res.setHeader("Access-Control-Allow-Origin", "*");
-      res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-      res.setHeader("Access-Control-Allow-Headers", "*");
-      if (req.method === "OPTIONS") { res.writeHead(204); return res.end(); }
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ status: "ok", mode: "native" }));
-    });
-    s8765.listen(8765, "127.0.0.1", () => {
-      console.log("[Legacy Port 8765 Bridge] Active on 127.0.0.1:8765");
-    });
-    s8765.on("error", () => {});
-  } catch {}
 
   app.get("/api/memories", async (req, res) => {
     try {
@@ -1786,9 +1747,9 @@ async function startServer() {
     fs3.writeFileSync(SETTINGS_FILE, JSON.stringify(data, null, 2), "utf-8");
   }
   
-    app.get("/api/settings/wake-word", async (req, res) => {
+  app.get("/api/settings/wake-word", async (req, res) => {
     try {
-      const s = loadSettingsFile();
+      const s = await loadSettings();
       res.json({ ok: true, wakeWordEnabled: Boolean(s.wakeWordEnabled), wakePhrase: s.wakePhrase || "hey myraa" });
     } catch (e) {
       res.status(500).json({ ok: false, error: e.message });
@@ -1798,13 +1759,12 @@ async function startServer() {
   app.post("/api/settings/wake-word", async (req, res) => {
     try {
       const { enabled, phrase } = req.body;
-      const current = loadSettingsFile();
-      const next = { ...current };
-      if (enabled !== undefined) next.wakeWordEnabled = Boolean(enabled);
-      if (phrase !== undefined) next.wakePhrase = String(phrase).trim();
-      saveSettingsFile(next);
-      logCommand(`WAKE_WORD_SETTINGS: enabled=${next.wakeWordEnabled} phrase="${next.wakePhrase}"`);
-      res.json({ ok: true, wakeWordEnabled: next.wakeWordEnabled, wakePhrase: next.wakePhrase });
+      const s = await loadSettings();
+      if (enabled !== undefined) s.wakeWordEnabled = Boolean(enabled);
+      if (phrase !== undefined) s.wakePhrase = String(phrase).trim();
+      await saveSettings(s);
+      logCommand(`WAKE_WORD_SETTINGS: enabled=${s.wakeWordEnabled} phrase="${s.wakePhrase}"`);
+      res.json({ ok: true, wakeWordEnabled: s.wakeWordEnabled, wakePhrase: s.wakePhrase });
     } catch (e) {
       res.status(500).json({ ok: false, error: e.message });
     }
@@ -1826,11 +1786,6 @@ async function startServer() {
       const current = loadSettingsFile();
       const next = { ...current, ...patch };
       saveSettingsFile(next);
-      if (patch.apiKeys?.gemini && typeof patch.apiKeys.gemini === "string") {
-        try {
-          setGeminiApiKey(patch.apiKeys.gemini);
-        } catch {}
-      }
       if ("autoStart" in patch) {
         callDesktopAgent(patch.autoStart ? "enableAutoStart" : "disableAutoStart", {}).catch(() => {
         });
@@ -1930,13 +1885,200 @@ async function startServer() {
       res.status(500).json({ error: e.message });
     }
   });
-  app.get("/api/proxy", (req, res) => {
-    res.status(403).json({ error: "Proxy endpoint disabled for security." });
+  app.get("/api/proxy", async (req, res) => {
+    try {
+      const url = req.query.url;
+      if (!url) {
+        return res.status(400).json({ error: "Missing 'url' parameter." });
+      }
+      console.log(`[Proxy Scraper] Fetching external content for: ${url}`);
+      const response = await fetch(url, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
+        }
+      });
+      if (!response.ok) {
+        throw new Error(`Scraper failed to load page: status ${response.status}`);
+      }
+      const html = await response.text();
+      const titleMatch = html.match(/<title>(.*?)<\/title>/i);
+      const title = titleMatch ? titleMatch[1].trim() : "";
+      const headings = [];
+      const headingMatches = html.matchAll(/<h([1-3])\b[^>]*>(.*?)<\/h\1>/gi);
+      for (const match of headingMatches) {
+        const text = match[2].replace(/<[^>]*>/g, "").trim();
+        if (text && text.length > 3 && text.length < 120 && !headings.includes(text)) {
+          headings.push(text);
+        }
+      }
+      const links = [];
+      const linkMatches = html.matchAll(/<a\b[^>]*\bhref=["']([^"']+)["'][^>]*>(.*?)<\/a>/gi);
+      for (const match of linkMatches) {
+        let href = match[1].trim();
+        const text = match[2].replace(/<[^>]*>/g, "").trim();
+        if (text && text.length > 2 && text.length < 100) {
+          if (href.startsWith("/")) {
+            try {
+              const u = new URL(url);
+              href = `${u.protocol}//${u.host}${href}`;
+            } catch {
+            }
+          }
+          if (href.startsWith("http://") || href.startsWith("https://")) {
+            links.push({ text, href });
+          }
+        }
+      }
+      const paragraphs = [];
+      const paragraphMatches = html.matchAll(/<p\b[^>]*>(.*?)<\/p>/gi);
+      for (const match of paragraphMatches) {
+        const text = match[1].replace(/<[^>]*>/g, "").trim();
+        if (text && text.length > 25 && text.length < 600 && !paragraphs.includes(text)) {
+          paragraphs.push(text);
+        }
+      }
+      const buttons = [];
+      const buttonMatches = html.matchAll(/<button\b[^>]*>(.*?)<\/button>/gi);
+      for (const match of buttonMatches) {
+        const text = match[1].replace(/<[^>]*>/g, "").trim();
+        if (text && text.length > 1 && text.length < 60 && !buttons.includes(text)) {
+          buttons.push(text);
+        }
+      }
+      res.json({
+        url,
+        title,
+        headings: headings.slice(0, 15),
+        links: links.filter((l) => !l.href.includes("javascript:")).slice(0, 30),
+        buttons: buttons.slice(0, 15),
+        paragraphs: paragraphs.slice(0, 12)
+      });
+    } catch (err) {
+      console.error(`[Proxy Scraper] Error fetching ${req.query.url}:`, err.message);
+      res.status(500).json({ error: `Scraper error: ${err.message}` });
+    }
   });
-  app.get("/api/web-proxy", (req, res) => {
-    res.status(403).send("Web proxy endpoint disabled for security.");
-  });
+  app.get("/api/web-proxy", async (req, res) => {
+    let targetUrl = "";
+    try {
+      const urlParam = req.query.url;
+      if (!urlParam) {
+        return res.status(400).send("Myraa Web Proxy Error: Missing target 'url' parameter");
+      }
+      targetUrl = urlParam.trim();
+      if (targetUrl.startsWith("/")) {
+        return res.status(400).send(`Myraa Web Proxy Error: Relative paths are not supported directly (${targetUrl}).`);
+      }
+      try {
+        if (!targetUrl.startsWith("http://") && !targetUrl.startsWith("https://")) {
+          targetUrl = "https://" + targetUrl;
+        }
+        const parsed = new URL(targetUrl);
+        if (!parsed.hostname || !parsed.hostname.includes(".")) {
+          throw new Error("Missing or invalid domain name extension (e.g. .com, .org, .net).");
+        }
+      } catch (err) {
+        return res.status(400).send(`Myraa Web Proxy Error: Invalid URL specified: "${urlParam}". Make sure you enter a valid domain name.`);
+      }
+      console.log(`[Web Proxy] Routing connection through proxy: ${targetUrl}`);
+      let response;
+      try {
+        response = await fetch(targetUrl, {
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
+          }
+        });
+      } catch (fetchErr) {
+        console.warn(`[Web Proxy Failed Fetch] Target: ${targetUrl} Error:`, fetchErr.message);
+        return res.status(502).send(`Myraa Web Proxy Error: Unable to fetch the website "${targetUrl}". The site might be offline, or the URL address is spelled incorrectly. Details: ${fetchErr.message}`);
+      }
+      if (!response.ok) {
+        return res.status(response.status).send(`Myraa Web Proxy Error: Failed loading remote website. Server returned status: ${response.status} (${response.statusText})`);
+      }
+      const contentType = response.headers.get("content-type") || "";
+      if (!contentType.includes("text/html")) {
+        const arrayBuffer = await response.arrayBuffer();
+        res.setHeader("Content-Type", contentType);
+        return res.send(Buffer.from(arrayBuffer));
+      }
+      let htmlContents = await response.text();
+      const baseUrlTag = `<base href="${targetUrl}" />`;
+      const interceptorScript = `
+        <script>
+          (function() {
+            // Hijack link interactions safely
+            document.addEventListener('click', function(e) {
+              var anchor = e.target.closest('a');
+              if (anchor) {
+                var href = anchor.getAttribute('href');
+                if (href && !href.startsWith('#') && !href.startsWith('javascript:')) {
+                  e.preventDefault();
+                  try {
+                    var resolvedUrl = new URL(href, window.location.href).href;
+                    window.parent.postMessage({ type: 'NAVIGATE', url: resolvedUrl }, '*');
+                  } catch (err) {
+                    console.error("[Proxy Interceptor] Failed resolving link:", err);
+                  }
+                }
+              }
+            }, true);
 
+            // Hijack search form submits
+            document.addEventListener('submit', function(e) {
+              var form = e.target;
+              if (form) {
+                e.preventDefault();
+                try {
+                  var formData = new FormData(form);
+                  var params = new URLSearchParams();
+                  formData.forEach(function(value, key) {
+                    if (typeof value === 'string') {
+                      params.append(key, value);
+                    }
+                  });
+                  var actionAttr = form.getAttribute('action') || '';
+                  var actionUrl = new URL(actionAttr, window.location.href).href;
+                  if (form.method.toLowerCase() === 'get') {
+                    actionUrl += (actionUrl.indexOf('?') !== -1 ? '&' : '?') + params.toString();
+                  }
+                  window.parent.postMessage({ type: 'NAVIGATE', url: actionUrl }, '*');
+                } catch (err) {
+                  console.error("[Proxy Interceptor] Failed submitting form:", err);
+                }
+              }
+            }, true);
+
+            // Neutralize parent context locks (frame-busters)
+            window.alert = function(msg) { console.log("[Myraa Browser alert bypassed]:", msg); };
+            window.confirm = function(msg) { console.log("[Myraa Browser confirm bypassed]:", msg); return true; };
+            window.open = function(url) { window.parent.postMessage({ type: 'NAVIGATE', url: url }, '*'); return null; };
+          })();
+        </script>
+      `;
+      if (htmlContents.includes("<head>")) {
+        htmlContents = htmlContents.replace("<head>", `<head>
+${baseUrlTag}
+${interceptorScript}`);
+      } else if (htmlContents.includes("<HEAD>")) {
+        htmlContents = htmlContents.replace("<HEAD>", `<HEAD>
+${baseUrlTag}
+${interceptorScript}`);
+      } else {
+        htmlContents = baseUrlTag + "\n" + interceptorScript + "\n" + htmlContents;
+      }
+      res.setHeader("Content-Type", "text/html");
+      res.setHeader("X-Myraa-Proxied", "true");
+      res.removeHeader("X-Frame-Options");
+      res.removeHeader("Content-Security-Policy");
+      res.removeHeader("content-security-policy");
+      res.removeHeader("x-frame-options");
+      res.status(200).send(htmlContents);
+    } catch (e) {
+      console.warn("[Web Proxy Exception] Handled internal error:", e.message);
+      res.status(500).send(`Myraa Web Proxy Error: Internal error occurred proxying URL "${targetUrl || "unknown"}". Details: ${e.message}`);
+    }
+  });
   app.get("/api/youtube-search", async (req, res) => {
     try {
       const query = req.query.q;
@@ -2543,20 +2685,9 @@ async function startServer() {
         },
         callbacks: {
           onmessage: (message) => {
-            if (message.serverContent?.modelTurn?.parts) {
-              for (const part of message.serverContent.modelTurn.parts) {
-                if (part.inlineData?.data) {
-                  clientWs.send(JSON.stringify({ type: "audio", audio: part.inlineData.data }));
-                }
-                if (part.text) {
-                  clientWs.send(JSON.stringify({ type: "transcription", role: "model", text: part.text }));
-                  currentModelResponseText += part.text;
-                }
-              }
-            }
-            if (message.serverContent?.outputTranscription?.text) {
-              clientWs.send(JSON.stringify({ type: "transcription", role: "model", text: message.serverContent.outputTranscription.text }));
-              currentModelResponseText += message.serverContent.outputTranscription.text;
+            const audio = message.serverContent?.modelTurn?.parts[0]?.inlineData?.data;
+            if (audio) {
+              clientWs.send(JSON.stringify({ type: "audio", audio }));
             }
             if (message.serverContent?.interrupted) {
               console.log("[Myraa Interrupted!]");
@@ -2582,17 +2713,15 @@ async function startServer() {
                 })();
               }
             }
-            if (message.serverContent?.userTurn?.parts) {
-              for (const part of message.serverContent.userTurn.parts) {
-                if (part.text) {
-                  clientWs.send(JSON.stringify({ type: "transcription", role: "user", text: part.text }));
-                  dialogueHistory.push({ role: "user", text: part.text });
-                }
-              }
+            const modelText = message.serverContent?.outputTranscription?.text ?? message.serverContent?.modelTurn?.parts?.[0]?.text;
+            if (modelText) {
+              clientWs.send(JSON.stringify({ type: "transcription", role: "model", text: modelText }));
+              currentModelResponseText += modelText;
             }
-            if (message.serverContent?.inputTranscription?.text) {
-              clientWs.send(JSON.stringify({ type: "transcription", role: "user", text: message.serverContent.inputTranscription.text }));
-              dialogueHistory.push({ role: "user", text: message.serverContent.inputTranscription.text });
+            const userTextOutput = message.serverContent?.inputTranscription?.text ?? message.serverContent?.userTurn?.parts?.[0]?.text;
+            if (userTextOutput) {
+              clientWs.send(JSON.stringify({ type: "transcription", role: "user", text: userTextOutput }));
+              dialogueHistory.push({ role: "user", text: userTextOutput });
             }
             if (message.toolCall?.functionCalls) {
               for (const fc of message.toolCall.functionCalls) {
@@ -2692,36 +2821,21 @@ async function startServer() {
             if (authenticationRejected) {
               clearGeminiApiKey();
             }
-            if (event.code !== 1000 && event.code !== 1005) {
-              try {
-                clientWs.send(JSON.stringify(authenticationRejected ? {
-                  type: "error",
-                  code: "INVALID_API_KEY",
-                  error: "Google rejected the saved Gemini API key. Enter a new key to continue."
-                } : {
-                  type: "error",
-                  error: `Gemini Live closed (${details}). Open Settings \u2192 Voice to verify or replace the API key.`
-                }));
-              } catch {
-              }
+            try {
+              clientWs.send(JSON.stringify(authenticationRejected ? {
+                type: "error",
+                code: "INVALID_API_KEY",
+                error: "Google rejected the saved Gemini API key. Enter a new key to continue."
+              } : {
+                type: "error",
+                error: `Gemini Live closed (${details}). Open Settings \u2192 Voice to verify or replace the API key.`
+              }));
+            } catch {
             }
           }
         }
       });
       clientWs.send(JSON.stringify({ type: "status", status: "connected" }));
-      setTimeout(() => {
-        try {
-          session.sendClientContent({
-            turns: [{
-              role: "user",
-              parts: [{ text: "Hello Myraa! You are now online. Please say hello and warmly greet Aarav out loud right now!" }]
-            }],
-            turnComplete: true
-          });
-        } catch (greetErr) {
-          console.warn("Initial greeting turn notice:", greetErr.message);
-        }
-      }, 250);
       clientWs.on("message", (rawMsg) => {
         try {
           const msg = JSON.parse(rawMsg.toString());
@@ -2782,8 +2896,7 @@ async function startServer() {
   ];
   let distPath = candidateDirs.find(d => import_fs.default.existsSync(import_path2.default.join(d, "index.html"))) || __dirname;
 
-  // Serve static assets WITHOUT auto-index so "/" always goes through token injection
-  app.use(import_express.default.static(distPath, { index: false }));
+  app.use(import_express.default.static(distPath));
   if (import_fs.default.existsSync(import_path2.default.join(distPath, "assets"))) {
     app.use("/assets", import_express.default.static(import_path2.default.join(distPath, "assets")));
   }
