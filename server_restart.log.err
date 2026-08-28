@@ -1,0 +1,4 @@
+[Security] Rejected unauthorized WebSocket upgrade to /live from 127.0.0.1
+Gemini Live session closed: code=1000 reason=No close reason provided
+Gemini Live session closed: code=1000 reason=No close reason provided
+Gemini Live session closed: code=1000 reason=No close reason provided
