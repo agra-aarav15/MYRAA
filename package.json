@@ -4,7 +4,7 @@
   "description": "MYRAA — a private 3D AI desktop companion powered by each user's own Gemini API key.",
   "author": "Aarav",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "module",
   "main": "electron/main.cjs",
   "dependencies": {

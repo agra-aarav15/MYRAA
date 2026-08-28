@@ -352,143 +352,7 @@ var logStartup = (m) => appendLog("startup.log", m);
 var logError = (m) => appendLog("errors.log", m);
 var DESKTOP_AGENT_URL = process.env.DESKTOP_AGENT_URL || "http://127.0.0.1:8765";
 var DESKTOP_AGENT_TIMEOUT = 25e3;
-var JARVIS_VERSION = "1.1.0-jarvis";
-var JARVIS_AUDIT_FILE = dataFile("jarvis_audit.jsonl");
-function jarvisAudit(entry) {
-  try {
-    const line = JSON.stringify({ ts: new Date().toISOString(), ...entry }) + "\n";
-    fs3.appendFileSync(JARVIS_AUDIT_FILE, line, "utf8");
-  } catch {}
-}
-async function handleCreateSnakeLadderGame(args = {}) {
-  jarvisAudit({ tool: "createSnakeLadderGame", args });
-  const base = (args.path || args.folder || "F:\\snake-ladder").toString().trim();
-  const target = resolveUserPath(base);
-  try {
-    fs.mkdirSync(target, { recursive: true });
-    const indexHtml = `<!DOCTYPE html>
-<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Snake & Ladder - MYRAA Jarvis</title>
-<style>
-:root{--bg:#000;--glass:rgba(255,255,255,0.08);--accent:#7c3aed}
-*{box-sizing:border-box}body{margin:0;background:#000;color:#fff;font-family:Inter,system-ui;display:flex;flex-direction:column;align-items:center;min-height:100vh;padding:24px}
-h1{margin:8px 0 4px;font-weight:800;letter-spacing:.04em}
-.sub{opacity:.7;margin-bottom:14px}
-.board{width:640px;max-width:92vw;aspect-ratio:1;background:linear-gradient(180deg,rgba(124,58,237,.18),rgba(255,255,255,.06));backdrop-filter:blur(28px);border:1px solid rgba(255,255,255,.12);border-radius:18px;padding:12px;display:grid;grid-template-columns:repeat(10,1fr);gap:6px;box-shadow:0 20px 60px rgba(0,0,0,.6)}
-.cell{aspect-ratio:1;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.08);border-radius:10px;display:flex;align-items:center;justify-content:center;font-weight:700;position:relative;overflow:hidden}
-.cell.snake{background:linear-gradient(180deg,rgba(239,68,68,.35),rgba(239,68,68,.12))}
-.cell.ladder{background:linear-gradient(180deg,rgba(34,197,94,.35),rgba(34,197,94,.12))}
-.cell span.num{position:absolute;top:4px;left:6px;font-size:10px;opacity:.6}
-.pawn{width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.5);position:absolute;bottom:6px}
-.controls{margin-top:16px;display:flex;gap:10px;flex-wrap:wrap;justify-content:center}
-button{background:rgba(124,58,237,.9);color:#fff;border:0;padding:12px 18px;border-radius:12px;font-weight:800;cursor:pointer}
-button:disabled{opacity:.5}
-.status{margin-top:10px;opacity:.85}
-.mirror{margin-top:18px;width:640px;max-width:92vw;height:80px;background:linear-gradient(180deg,rgba(255,255,255,.06),transparent);filter:blur(8px);opacity:.4;border-radius:12px}
-</style></head><body>
-<h1>🐍 Snake & Ladder — MYRAA Jarvis</h1><div class="sub">MYRAA Black Glass • Free-model build • F:\\snake-ladder</div>
-<div id="board" class="board"></div>
-<div class="controls"><button id="roll">🎲 Roll Dice</button><button id="reset">Reset</button><span id="turn" class="status">P1 turn — Roll!</span></div>
-<div id="log" class="status"></div><div class="mirror"></div>
-<script>
-const snakes={99:54,70:55,52:42,56:8,43:17,50:5,27:5}, ladders={3:51,6:27,11:70,15:34,17:64,19:59,22:37,38:59,57:76,61:78,49:67,72:91,81:98};
-const board=document.getElementById('board'), rollBtn=document.getElementById('roll'), resetBtn=document.getElementById('reset'), turnEl=document.getElementById('turn'), logEl=document.getElementById('log');
-let p={1:1,2:1}, turn=1;
-function build(){board.innerHTML='';for(let r=9;r>=0;r--){for(let c=0;c<10;c++){let n=r%2===0? r*10 + c +1 : r*10 + (9-c)+1; const d=document.createElement('div');d.className='cell'+(snakes[n]?' snake':'')+(ladders[n]?' ladder':'');d.id='c-'+n;d.innerHTML='<span class=num>'+n+'</span>'; if(snakes[n]) d.title='🐍 → '+snakes[n]; if(ladders[n]) d.title='🪜 → '+ladders[n]; board.appendChild(d);}} place();
-}
-function place(){document.querySelectorAll('.pawn').forEach(e=>e.remove());[1,2].forEach(pl=>{const cell=document.getElementById('c-'+p[pl]); if(cell){const pawn=document.createElement('div');pawn.className='pawn';pawn.style.background=pl===1?'#fff':'#a78bfa';pawn.title='P'+pl; cell.appendChild(pawn);}})}
-function log(t){logEl.textContent=t}
-rollBtn.onclick=()=>{
-  const dice=Math.floor(Math.random()*6)+1; let cur=p[turn]; let nxt=cur+dice; if(nxt>100) {log('P'+turn+' rolled '+dice+' — stay at '+cur+' (need exact)'); turn=turn===1?2:1; turnEl.textContent='P'+turn+' turn'; return}
-  let extra=''; if(ladders[nxt]){ extra=' 🪜 ladder to '+ladders[nxt]; nxt=ladders[nxt];} else if(snakes[nxt]){ extra=' 🐍 snake to '+snakes[nxt]; nxt=snakes[nxt];}
-  p[turn]=nxt; place(); log('P'+turn+' rolled '+dice+': '+cur+' → '+nxt+extra); if(nxt===100){ turnEl.textContent='🎉 P'+turn+' wins!'; rollBtn.disabled=true; log('P'+turn+' wins! Click Reset'); return} turn=turn===1?2:1; turnEl.textContent='P'+turn+' turn — last roll '+dice;
-};
-resetBtn.onclick=()=>{p={1:1,2:1};turn=1;rollBtn.disabled=false;turnEl.textContent='P1 turn — Roll!';log('Reset');place();}
-build(); log('Ready — Black Glass edition by MYRAA Jarvis');
-</script>
-</body></html>`;
-    const gamePath = path.join(target, "index.html");
-    fs.writeFileSync(gamePath, indexHtml, "utf8");
-    const readme = `# Snake & Ladder — MYRAA Jarvis
-
-Free-model build (opencode/muse-spark-1.2-contributor-free) — no paid quota.
-Open index.html in browser. Single-file, black-glass theme matching MYRAA.
-
-Path: ${target}
-Built: ${new Date().toISOString()} via jarvisMission
-Run: double-click index.html or npx serve .
-`;
-    fs.writeFileSync(path.join(target, "README.md"), readme, "utf8");
-    const os = require("os");
-    return { ok: true, path: target, file: gamePath, result: `Snake & Ladder created at ${target} — open index.html to play (black-glass, 100 cells, snakes/ladders + 2 pawns).`, system: `${os.platform()} ${os.hostname()}` };
-  } catch (e) {
-    return { ok: false, error: "createSnakeLadderGame failed: " + (e?.message || e) };
-  }
-}
-async function handleGetTodayStatus(args = {}) {
-  jarvisAudit({ tool: "getTodayStatus", args });
-  const os = require("os");
-  const out = { date: new Date().toISOString(), platform: os.platform(), hostname: os.hostname(), cwd: process.cwd() };
-  try {
-    const gitLog = require("child_process").execSync("git log --oneline -5", { encoding: "utf8", timeout: 3000 }).trim();
-    out.git_log = gitLog;
-  } catch { out.git_log = "(no git log)"; }
-  try {
-    const gitStatus = require("child_process").execSync("git status --short", { encoding: "utf8", timeout: 3000 }).trim();
-    out.git_status = gitStatus || "(clean)";
-  } catch { out.git_status = "(git not available)"; }
-  try {
-    const branch = require("child_process").execSync("git rev-parse --abbrev-ref HEAD", { encoding: "utf8", timeout: 2000 }).trim();
-    out.branch = branch;
-  } catch {}
-  try {
-    const recent = require("child_process").execSync("gh run list --limit 3 --json databaseId,conclusion,displayTitle --jq \".[] | \\\"\\(.databaseId) \\(.conclusion) \\(.displayTitle)\\\"\"", { encoding: "utf8", timeout: 4000 }).trim();
-    out.ci_runs = recent;
-  } catch { out.ci_runs = "(gh not available)"; }
-  try {
-    out.hasApiKey = hasGeminiApiKey();
-  } catch {}
-  out.jARVIS_VERSION = JARVIS_VERSION;
-  out.result = `Today ${out.date.split("T")[0]} — branch ${out.branch || "feat/jarvis-engine"} — git_status: ${out.git_status.split("\n")[0]} — ci: ${out.ci_runs.split("\n")[0] || "n/a"} — host ${os.hostname()} — MYRAA host 127.0.0.1:3000 ${(() => { try { require("child_process").execSync("curl -s http://127.0.0.1:3000/api/config", { timeout: 1000 }); return "UP"; } catch { return "unknown"; } })()}`;
-  return { ok: true, ...out };
-}
-async function handleJarvisMission(args = {}) {
-  const mission = (args.mission || args.task || args.prompt || args.text || "").toString();
-  const lower = mission.toLowerCase();
-  jarvisAudit({ tool: "jarvisMission", mission });
-  const steps = [];
-  const wantGame = /snake|ladder|game/.test(lower);
-  const wantStatus = /status|today|git|ci|build/.test(lower);
-  const wantOpenCode = /opencode|open code|free/.test(lower);
-  let gameRes = null, statusRes = null;
-  if (wantGame) {
-    const pathArg = args.path || (lower.includes("f:") ? (mission.match(/f:[^\s"]+/)||[])[0] : "F:\\snake-ladder");
-    gameRes = await handleCreateSnakeLadderGame({ path: pathArg });
-    steps.push(`game:${gameRes.ok ? "ok@" + gameRes.path : "fail:" + gameRes.error}`);
-  }
-  if (wantStatus || (!wantGame && mission.trim().length===0)) {
-    statusRes = await handleGetTodayStatus({});
-    steps.push(`status:${statusRes.ok ? "ok" : "fail"}`);
-  }
-  // If mission contains generic automation keywords but not game/status, we still provide status + acknowledge free-model routing
-  if (!wantGame && !wantStatus && mission.trim()) {
-    // generic Jarvis mission: acknowledge + return status as baseline
-    statusRes = await handleGetTodayStatus({});
-    steps.push(`generic:${mission.slice(0,40)}`);
-  }
-  const freeInfo = wantOpenCode ? "Free-model: opencode/muse-spark-1.2-contributor-free (local, no paid quota) — used built-in black-glass template for instant deliverable; for custom logic next iteration will route via Ollama/muse-spark." : "Routing: local template (free) — no paid API consumed.";
-  const summaryParts = [];
-  if (gameRes?.ok) summaryParts.push(`🎮 Snake & Ladder ready at ${gameRes.path}\\index.html — double-click to play.`);
-  if (statusRes?.ok) summaryParts.push(`📊 Today ${statusRes.date.split("T")[0]} — ${statusRes.branch || "feat/jarvis-engine"} — ${statusRes.git_status === "(clean)" ? "git clean" : statusRes.git_status.split("\n").slice(0,2).join("; ")} — CI ${statusRes.ci_runs.split("\n")[0] || "n/a"} — host ${statusRes.hostname}.`);
-  summaryParts.push(freeInfo);
-  const result = summaryParts.join(" ");
-  return { ok: true, steps, game: gameRes, status: statusRes, result, jarvisVersion: JARVIS_VERSION };
-}
 var DESKTOP_TOOLS = /* @__PURE__ */ new Set([
-  // jarvis high-level missions (Myraa+Jarvis hybrid, UI frozen)
-  "jarvisMission",
-  "getTodayStatus",
-  "createSnakeLadderGame",
   // applications / websites / search
   "openApplication",
   "closeApplication",
@@ -1795,10 +1659,6 @@ async function callDesktopAgent(tool, args = {}) {
   } else if (["runTerminalCommand", "executeCommand"].includes(tool)) {
     const cmd = args.command || args.cmd || "";
     response = nativeRunTerminal(cmd);
-  } else if (["jarvisMission", "getTodayStatus", "createSnakeLadderGame"].includes(tool)) {
-    if (tool === "jarvisMission") response = await handleJarvisMission(args);
-    else if (tool === "getTodayStatus") response = await handleGetTodayStatus(args);
-    else if (tool === "createSnakeLadderGame") response = await handleCreateSnakeLadderGame(args);
   }
 
   // 11. Fallback: Pre-call ensureDesktopAgent and call Python Daemon
@@ -2675,21 +2535,6 @@ async function startServer() {
                 {
                   name: "getAutoStartStatus",
                   description: "Check whether MYRAA is currently configured to auto-start on Windows login.",
-                  parameters: { type: import_genai2.Type.OBJECT, properties: {} }
-                },
-                {
-                  name: "jarvisMission",
-                  description: "MYRAA+Jarvis high-level autonomous mission. Use for ANY 'do it for me' request: 'Make a snake and ladder game in OpenCode and give me status of today' -> Jarvis will create the game via free opencode/muse-spark template (no paid API) AND return today's git/CI/host status in one go. Also handles 'do my work while away', full PC automation, multi-step tasks. Always prefer this for complex missions.",
-                  parameters: { type: import_genai2.Type.OBJECT, properties: { mission: { type: import_genai2.Type.STRING, description: "Full natural language mission, e.g. 'Make a snake and ladder game in OpenCode and give me status of today'" }, path: { type: import_genai2.Type.STRING, description: "Optional target folder for game/files (default F:\\snake-ladder)" } }, required: ["mission"] }
-                },
-                {
-                  name: "createSnakeLadderGame",
-                  description: "Create a playable Snake & Ladder game (black-glass MYRAA theme) at the given folder. Standalone HTML, no build needed. Use for 'snake game' requests.",
-                  parameters: { type: import_genai2.Type.OBJECT, properties: { path: { type: import_genai2.Type.STRING, description: "Target folder path, e.g. 'F:\\snake-ladder' (default F:\\snake-ladder)" } } }
-                },
-                {
-                  name: "getTodayStatus",
-                  description: "Return today's status: date, branch, git log/status, recent CI runs, host, MYRAA host health, hasApiKey. Use for 'status of today' requests.",
                   parameters: { type: import_genai2.Type.OBJECT, properties: {} }
                 }
               ]

@@ -1,0 +1,9 @@
+﻿{
+  \"version\": \"1.1.0-jarvis\",
+  \"routines\": [
+    { \"name\": \"morning_status\", \"schedule\": \"every morning 9am\", \"mission\": \"give me the status of today\", \"enabled\": false },
+    { \"name\": \"snake_ladder_demo\", \"schedule\": \"on_demand\", \"mission\": \"Make a snake and ladder game in OpenCode\", \"enabled\": true }
+  ],
+  \"audit\": \"%APPDATA%\\\\myraa\\\\jarvis_audit.jsonl\",
+  \"privacy\": \"GUARDED — redacts secrets before cloud, audit every external call\"
+}
