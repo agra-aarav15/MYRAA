@@ -6,6 +6,7 @@
 
 import { computerHandlers } from './computer.js';
 import { browserHandlers } from './browser.js';
+import { policyEngine as defaultPolicyEngine } from '../policy/engine.js';
 
 // ---------------------------------------------------------------------------
 // Permission model — §34, §35, §36
@@ -233,7 +234,8 @@ const ALIAS_MAP = {
 // ---------------------------------------------------------------------------
 export class ToolRegistry {
   constructor({ policyEngine = null, eventBus = null, logger = console } = {}) {
-    this.policyEngine = policyEngine;
+    // Every tool action must pass through Policy Engine §34 — wire singleton by default
+    this.policyEngine = policyEngine || defaultPolicyEngine || null;
     this.eventBus = eventBus;
     this.logger = logger;
     this._tools = new Map();
