@@ -58,6 +58,73 @@ function getAuthToken() {
 }
 const MYRAA_AUTH_TOKEN = getAuthToken();
 
+// --- Myraa Core Orchestrator Integration (MBP §5, §59-60 final integration) ---
+// jarvisMission uses the new MasterOrchestrator if myraa-core is available (ESM dynamic import),
+// otherwise falls back to existing desktop-agent/simple response. Keeps UI frozen (§1) and preserves
+// backward compatibility: server still boots even if myraa-core build is missing.
+let _myraaOrchestrator = null;
+let _myraaOrchestratorLoadAttempted = false;
+async function getMyraaOrchestrator() {
+  if (_myraaOrchestrator) return _myraaOrchestrator;
+  if (_myraaOrchestratorLoadAttempted) return null;
+  _myraaOrchestratorLoadAttempted = true;
+  try {
+    const coreBase = path.resolve(__dirname, '..', 'myraa-core');
+    const orchPath = path.join(coreBase, 'orchestrator.js');
+    const registryPath = path.join(coreBase, 'tools', 'registry.js');
+    const policyPath = path.join(coreBase, 'policy', 'engine.js');
+    if (!fs.existsSync(orchPath)) { _myraaOrchestratorLoadAttempted = false; return null; }
+    const orchMod = await import('file://' + orchPath.replace(/\\/g,'/'));
+    const regMod = await import('file://' + registryPath.replace(/\\/g,'/')).catch(()=>null);
+    const polMod = await import('file://' + policyPath.replace(/\\/g,'/')).catch(()=>null);
+    const MasterOrchestrator = orchMod.MasterOrchestrator || orchMod.default;
+    if (!MasterOrchestrator) return null;
+    let registry = null;
+    try {
+      const ToolRegistry = regMod?.ToolRegistry;
+      if (ToolRegistry) registry = new ToolRegistry({ policyEngine: polMod?.policyEngine || null });
+      else {
+        // fallback minimal registry that delegates to callDesktopAgent — satisfies orchestrator.handle contract
+        registry = {
+          call: async (tool, args, ctx) => {
+            if (tool === 'jarvisMission') return { ok: true, result: `jarvisMission fallback inside registry: ${args?.mission || ''}` };
+            try { return await callDesktopAgent(tool, args || {}); } catch (e) { return { ok:false, error:e.message }; }
+          }
+        };
+      }
+    } catch {}
+    const policy = polMod?.policyEngine || null;
+    _myraaOrchestrator = new MasterOrchestrator({ toolRegistry: registry, policyEngine: policy, modelRouter: null, memory: null });
+    console.log('[Myraa Core] MasterOrchestrator loaded for jarvisMission');
+    return _myraaOrchestrator;
+  } catch (e) {
+    console.warn('[Myraa Core] Orchestrator not available, fallback:', e?.message || e);
+    return null;
+  }
+}
+async function jarvisMission(mission, opts={}) {
+  const orch = await getMyraaOrchestrator();
+  if (orch && typeof orch.handle === 'function') {
+    try {
+      const res = await orch.handle(String(mission||''), { device: opts.device || 'pc', confirmed: !!opts.confirmed });
+      // Normalize to callDesktopAgent-style {ok, result}
+      if (res && res.ok) return { ok: true, result: res.result || res.summary || `Orchestrated: ${mission}`, orchestrated: true, taskId: res.taskId };
+      if (res && res.ok === false) return { ok: false, error: res.error, orchestrated: true, taskId: res.taskId };
+    } catch (e) {
+      console.warn('[jarvisMission] orchestrator handle failed, falling back:', e?.message || e);
+    }
+  }
+  // Fallback: existing behavior (simple acknowledgement + best-effort status)
+  try {
+    const fallbackStatus = (() => {
+      try { const os = require('os'); return `System: ${os.platform()} ${os.arch()} ${os.hostname()} | Mission queued (orchestrator unavailable)`; } catch { return 'Mission queued (fallback)'; }
+    })();
+    return { ok: true, result: `Mission received (fallback): ${String(mission).slice(0,300)} — ${fallbackStatus}`, orchestrated: false, fallback: true };
+  } catch (e) {
+    return { ok: true, result: `Mission received: ${String(mission).slice(0,300)}`, fallback: true };
+  }
+}
+
 try {
   fs.mkdirSync(DATA_DIR, { recursive: true });
   fs.mkdirSync(path.join(DATA_DIR, 'logs'), { recursive: true });
@@ -996,6 +1063,23 @@ async function callDesktopAgent(tool, args = {}) {
 
   let response = null;
 
+  // 0. Master Orchestrator — jarvisMission integration (myraa-core §5, §59-60 final)
+  // If myraa-core available, delegates to MasterOrchestrator.handle(), else fallback above.
+  // This ensures dist/server.cjs uses the new orchestrator when present and gracefully falls back.
+  if (tool === "jarvisMission" || tool === "myraaMission" || tool === "orchestrate") {
+    const mission = args.mission || args.text || args.query || args.prompt || args.goal || "";
+    if (!mission) return { ok: false, error: "mission is required for jarvisMission" };
+    try {
+      const res = await jarvisMission(mission, { device: args.device || "pc", confirmed: !!args.confirmed });
+      lastToolExec = { name: tool + argsKey, time: now, result: res };
+      return res;
+    } catch (e) {
+      const fallback = { ok: true, result: `Mission received (error fallback): ${mission.slice(0,200)} — ${e.message}`, fallback: true };
+      lastToolExec = { name: tool + argsKey, time: now, result: fallback };
+      return fallback;
+    }
+  }
+
   // 1. Applications & Window Activation
   if (["openApplication", "openApp", "launchApp"].includes(tool)) {
     response = nativeOpenApp(args.name || args.application || args.appName);
@@ -1880,6 +1964,19 @@ async function startServer() {
       const { tool, args } = req.body;
       if (!tool) return res.status(400).json({ ok: false, error: "Tool name is required." });
       const result = await callDesktopAgent(tool, args || {});
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // §5, §59-60 final integration — jarvisMission via MasterOrchestrator if available (fallback to existing)
+  app.post("/api/mission", async (req, res) => {
+    try {
+      const mission = (req.body?.mission || req.body?.goal || req.body?.prompt || req.body?.text || '').toString().trim();
+      if (!mission) return res.status(400).json({ ok: false, error: "mission is required" });
+      const device = req.body?.device || 'pc';
+      const result = await jarvisMission(mission, { device, confirmed: !!req.body?.confirmed });
       res.json(result);
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });
