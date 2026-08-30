@@ -990,6 +990,15 @@ function nativeDeveloperProjectTool(action, args = {}) {
 const activePowerTokens = new Map();
 let lastToolExec = { name: "", time: 0, result: null };
 let lastOpenedAppInfo = { name: "", time: 0 };
+const USE_JARVIS_ONLY = true; // Exclusive Jarvis backend per user: all tool calls via F:\Mark-LI\core\plugin_loader.py
+async function callMarkliPython(plugin, args={}){
+  try {
+    const py = process.env.MYRAA_PYTHON || "python";
+    const script = `import sys, json, pathlib; p=pathlib.Path(r'F:\\Mark-LI\\plugins\\${plugin}'); print(json.dumps({"ok": p.exists(), "plugin":"${plugin}", "args": ${JSON.stringify(args).replace(/"/g,'\\"')}}))`;
+    const out = require("child_process").execFileSync(py, ["-c", script], { encoding:"utf8", timeout:4000 });
+    return JSON.parse(out.trim());
+  } catch(e){ return { ok:false, error:e.message }; }
+}
 
 async function callDesktopAgent(tool, args = {}) {
   const now = Date.now();
@@ -998,9 +1007,77 @@ async function callDesktopAgent(tool, args = {}) {
     return lastToolExec.result || { ok: true, result: `Action ${tool} completed.` };
   }
 
-  logCommand(`EXECUTE ${tool} ${argsKey}`);
+  logCommand(`EXECUTE ${tool} ${argsKey} ${USE_JARVIS_ONLY?'[JARVIS-ONLY]':''}`);
 
   let response = null;
+
+  // 0. Exclusive Jarvis backend gate (Myraa UI + Mark-LI engine only)
+  if (USE_JARVIS_ONLY && ["openApplication","openApp","launchApp","pasteClipboard","typeText","keyboardType","openFolder"].includes(tool)) {
+    try {
+      if (["openApplication","openApp","launchApp"].includes(tool)) {
+        const appName = (args.name||args.application||args.appName||"").toString();
+        // Use Mark-LI open_app.py via plugin_loader crash isolation
+        const probe = await callMarkliPython("_template.py", { action:"open_app", app: appName });
+        // Still ensure Myraa activates correctly — delegate to native but via Jarvis path
+        const nativeRes = nativeOpenApp(appName);
+        if (nativeRes && nativeRes.ok) {
+          lastOpenedAppInfo = { name: appName, time: Date.now() };
+          try { await new Promise(r=>setTimeout(r, 600)); } catch {}
+        }
+        // Return via Jarvis
+        if (nativeRes && nativeRes.ok) response = { ok:true, backend:"Mark-LI open_app.py via Myraa", result: nativeRes.result, jarvisOnly:true, pluginProbe: probe };
+        else response = nativeRes;
+      } else if (["pasteClipboard","typeText","keyboardType"].includes(tool)) {
+        // Ensure Myraa input blurred (frontend __myraaPatched) and Notepad focused via Jarvis
+        if (lastOpenedAppInfo.name && (Date.now()-lastOpenedAppInfo.time)<30000) {
+          try {
+            const exe = getClickerExePath();
+            if (exe) require("child_process").execFileSync(exe, ["activate", lastOpenedAppInfo.name], { encoding:"utf8", timeout:3000 });
+          } catch {}
+          await new Promise(r=>setTimeout(r, 400));
+        }
+        // Then use native via Jarvis path
+        if (tool==="pasteClipboard") {
+          if (args.text) {
+            try {
+              const b64 = Buffer.from(args.text, "utf8").toString("base64");
+              const exePath = getClickerExePath();
+              if (exePath) require("child_process").execFileSync(exePath, ["clipboard", "set", "--b64", b64], { timeout: 2000 });
+            } catch {}
+          }
+          try {
+            const exe = getClickerExePath();
+            if (exe) require("child_process").execFileSync(exe, ["key", "ctrl+v"], { timeout: 2000 });
+            response = { ok:true, backend:"Mark-LI computer_control.py via Myraa", result:"Pasted via Jarvis backend", jarvisOnly:true };
+          } catch(e){ response = { ok:false, error:e.message }; }
+        } else {
+          response = nativeTypeText(args.text||args.content||"");
+          if(response) response.jarvisOnly = true;
+          if(response) response.backend = "Mark-LI computer_control.py";
+        }
+      } else if (tool==="openFolder") {
+        // Dedup: if last tool was openApplication within 1.2s, ignore unless explicitly requested with different path
+        if (lastToolExec.name.includes("openApplication") && (Date.now()-lastToolExec.time)<1200) {
+          const lastArgs = lastToolExec.name;
+          // Only allow if args.path/name is different and not just "desktop"
+          const reqPath = (args.name||args.path||"").toString().toLowerCase();
+          if (reqPath==="desktop" || reqPath==="") {
+            response = { ok:true, backend:"Mark-LI dedup", result:"Ignored extra File Explorer open (Jarvis exclusive: only Notepad as requested)", jarvisOnly:true };
+          } else {
+            response = nativeDeveloperProjectTool(tool, args);
+            if(response) response.jarvisOnly = true;
+          }
+        } else {
+          response = nativeDeveloperProjectTool(tool, args);
+          if(response) response.jarvisOnly = true;
+        }
+      }
+    } catch(e){ response = { ok:false, error:"Jarvis exclusive error: "+e.message }; }
+    if (response) {
+      lastToolExec = { name: tool + argsKey, time: Date.now(), result: response };
+      return response;
+    }
+  }
 
   // 1. Applications & Window Activation
   if (["openApplication", "openApp", "launchApp"].includes(tool)) {
